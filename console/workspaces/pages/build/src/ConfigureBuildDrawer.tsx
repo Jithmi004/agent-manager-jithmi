@@ -46,6 +46,7 @@ import {
   globalConfig,
   INPUT_LIMITS,
 } from "@agent-management-platform/types";
+import { useUnsavedChangesGuard } from "@agent-management-platform/shared-component";
 import { useEffect, useCallback, useMemo, useState } from "react";
 import { GitSecretSelect } from "./components/GitSecretSelect";
 
@@ -71,6 +72,23 @@ interface ConfigureBuildFormValues {
   basePath?: string;
   openApiPath?: string;
 }
+
+// An A2A agent listens on its own port like a custom API, but serves its own
+// agent card at the well-known path — so it declares no OpenAPI document and no
+// base path.
+const interfacesNeedingPort = new Set<InputInterfaceType>(["CUSTOM", "A2A"]);
+
+const subTypeByInterface: Record<InputInterfaceType, string> = {
+  DEFAULT: "chat-api",
+  CUSTOM: "custom-api",
+  A2A: "a2a-agent",
+};
+
+const interfaceTypeBySubType: Record<string, InputInterfaceType> = {
+  "chat-api": "DEFAULT",
+  "custom-api": "CUSTOM",
+  "a2a-agent": "A2A",
+};
 
 const configureBuildSchema = z.object({
   repositoryUrl: z
@@ -104,7 +122,7 @@ const configureBuildSchema = z.object({
   language: z.string().trim().min(1, "Language is required"),
   languageVersion: z.string().trim().optional(),
   dockerfilePath: z.string().trim().optional(),
-  interfaceType: z.enum(["DEFAULT", "CUSTOM"]),
+  interfaceType: z.enum(["DEFAULT", "CUSTOM", "A2A"]),
   port: z
     .union([z.number(), z.string(), z.undefined()])
     .transform((val) => {
@@ -116,15 +134,15 @@ const configureBuildSchema = z.object({
   openApiPath: z.string().trim().optional(),
 }).refine(
   (data) => {
-    if (data.interfaceType === "CUSTOM" && !data.port) {
+    if (interfacesNeedingPort.has(data.interfaceType) && !data.port) {
       return false;
     }
     return true;
   },
-  { message: "Port is required when using custom interface", path: ["port"] }
+  { message: "Port is required for custom and A2A interfaces", path: ["port"] }
 ).refine(
   (data) => {
-    if (data.interfaceType === "CUSTOM" && data.port !== undefined) {
+    if (interfacesNeedingPort.has(data.interfaceType) && data.port !== undefined) {
       if (isNaN(data.port)) return false;
       if (data.port < 1 || data.port > 65535) return false;
     }
@@ -199,6 +217,12 @@ const inputInterfaces = [
       "Custom HTTP API with user-specified OpenAPI specification and port configuration",
     value: "CUSTOM" as const,
   },
+  {
+    label: "A2A Agent",
+    description:
+      "Speaks the A2A protocol. The agent serves its own agent card; the gateway exposes both A2A transports.",
+    value: "A2A" as const,
+  },
 ];
 
 export function ConfigureBuildDrawer({
@@ -210,19 +234,27 @@ export function ConfigureBuildDrawer({
 }: ConfigureBuildDrawerProps) {
   const theme = useTheme();
   const isPrivateRepoEnabled = globalConfig.featureFlags?.enablePrivateRepoSupport === true;
+  // An agent created before subtypes were recorded carries no subType, so fall
+  // back to the shape of its input interface — a port or a schema means it was
+  // configured as a custom API.
   const isCustomInterface =
     !!agent.inputInterface?.schema?.path ||
     !!agent.inputInterface?.port ||
-    !!agent.inputInterface?.basePath ||
-    agent.agentType?.subType === "custom-api";
+    !!agent.inputInterface?.basePath;
   const resolvedInterfaceType: InputInterfaceType =
-    agent.agentType?.subType === "custom-api"
-      ? "CUSTOM"
-      : agent.agentType?.subType === "chat-api"
-        ? "DEFAULT"
-        : isCustomInterface
-          ? "CUSTOM"
-          : "DEFAULT";
+    interfaceTypeBySubType[agent.agentType?.subType ?? ""] ??
+    (isCustomInterface ? "CUSTOM" : "DEFAULT");
+  // A2A-ness is fixed at creation — an A2A agent is provisioned without the REST
+  // api-configuration trait and published to the gateway as a kind: Agent, so the
+  // service rejects a build update that moves an agent across that line. Only
+  // offer the interfaces on the agent's own side of it.
+  const selectableInterfaces = useMemo(
+    () =>
+      inputInterfaces.filter(
+        (option) => (option.value === "A2A") === (resolvedInterfaceType === "A2A"),
+      ),
+    [resolvedInterfaceType],
+  );
   const repo = agent.provisioning?.repository;
   const buildpackConfig = agent.build?.type === 'buildpack' ? agent.build.buildpack : undefined;
   const dockerConfig = agent.build?.type === 'docker' ? agent.build.docker : undefined;
@@ -265,6 +297,7 @@ export function ConfigureBuildDrawer({
   );
   
   const [formData, setFormData] = useState<ConfigureBuildFormValues>(buildDefaults);
+  const [initialSnapshot, setInitialSnapshot] = useState<string | null>(null);
   const { errors, validateField, validateForm, clearErrors, setFieldError } =
     useFormValidation<ConfigureBuildFormValues>(configureBuildSchema);
 
@@ -274,9 +307,18 @@ export function ConfigureBuildDrawer({
   useEffect(() => {
     if (open) {
       setFormData(buildDefaults);
+      setInitialSnapshot(JSON.stringify(buildDefaults));
       clearErrors();
     }
   }, [open, buildDefaults, clearErrors]);
+
+  const isDirty = useMemo(
+    () => open && initialSnapshot !== null && JSON.stringify(formData) !== initialSnapshot,
+    [open, initialSnapshot, formData],
+  );
+  // onClose drops a URL param, so the guard would otherwise block the
+  // deliberate Cancel and post-save closes too.
+  const { allowNavigation } = useUnsavedChangesGuard(isDirty);
 
   const handleFieldChange = useCallback(
     (
@@ -329,13 +371,25 @@ export function ConfigureBuildDrawer({
             port: undefined,
             basePath: "/",
           } : {}),
+          ...(value === "A2A" ? {
+            openApiPath: "",
+            basePath: "/",
+          } : {}),
         };
         return newData;
       });
-      
+
       if (newData) {
         const error = validateField('interfaceType', value, newData);
         setFieldError('interfaceType', error);
+
+        if (value !== "CUSTOM") {
+          setFieldError('openApiPath', undefined);
+          setFieldError('basePath', undefined);
+        }
+        if (value === "DEFAULT") {
+          setFieldError('port', undefined);
+        }
       }
     },
     [validateField, setFieldError],
@@ -348,15 +402,10 @@ export function ConfigureBuildDrawer({
       return;
     }
 
+    const nextSubType = subTypeByInterface[formData.interfaceType];
     const nextAgentType = agent.agentType
-      ? {
-          ...agent.agentType,
-          subType: formData.interfaceType === "CUSTOM" ? "custom-api" : "chat-api",
-        }
-      : {
-          type: "agent-api",
-          subType: formData.interfaceType === "CUSTOM" ? "custom-api" : "chat-api",
-        };
+      ? { ...agent.agentType, subType: nextSubType }
+      : { type: "agent-api", subType: nextSubType };
 
     const buildParametersPayload: UpdateAgentBuildParametersRequest = {
       provisioning: {
@@ -399,7 +448,9 @@ export function ConfigureBuildDrawer({
                 path: formData.openApiPath || "",
               },
             }
-          : {}),
+          : formData.interfaceType === "A2A"
+            ? { port: Number(formData.port) }
+            : {}),
       },
     };
 
@@ -415,7 +466,7 @@ export function ConfigureBuildDrawer({
       {
         onSuccess: () => {
           clearErrors();
-          onClose();
+          allowNavigation(onClose);
         },
       },
     );
@@ -576,7 +627,7 @@ export function ConfigureBuildDrawer({
                   </Typography>
                   <Box display="flex" flexDirection="column" gap={1}>
                     <Box display="flex" flexDirection="row" gap={1}>
-                      {inputInterfaces.map((interfaceOption) => (
+                      {selectableInterfaces.map((interfaceOption) => (
                         <Card
                           key={interfaceOption.value}
                           variant="outlined"
@@ -716,6 +767,38 @@ export function ConfigureBuildDrawer({
                       </Box>
                     </Box>
                   </Collapse>
+                  <Collapse in={formData.interfaceType === "A2A"}>
+                    <Box display="flex" flexDirection="column" gap={1}>
+                      <Alert severity="info">
+                        The gateway exposes both A2A transports — JSON-RPC at{" "}
+                        <strong>/rpc</strong> and HTTP+JSON at{" "}
+                        <strong>/rest</strong> — and serves the agent&apos;s own
+                        card at the well-known path.
+                      </Alert>
+                      <Box>
+                        <TextInput
+                          label="Port"
+                          placeholder="9099"
+                          required={formData.interfaceType === "A2A"}
+                          value={formData.port ?? ""}
+                          onChange={(e) => {
+                            const next = e.target.value;
+                            if (/^\d*$/.test(next)) {
+                              handleFieldChange('port', next === "" ? undefined : Number(next));
+                            }
+                          }}
+                          size="small"
+                          type="number"
+                          error={!!errors.port}
+                          helperText={
+                            errors.port ||
+                            (formData.port ? undefined : "Port is required")
+                          }
+                          disabled={isPending}
+                        />
+                      </Box>
+                    </Box>
+                  </Collapse>
                 </Box>
               </CardContent>
             </Card>
@@ -724,7 +807,7 @@ export function ConfigureBuildDrawer({
               <Button
                 variant="outlined"
                 color="inherit"
-                onClick={onClose}
+                onClick={() => allowNavigation(onClose)}
                 disabled={isPending}
               >
                 Cancel

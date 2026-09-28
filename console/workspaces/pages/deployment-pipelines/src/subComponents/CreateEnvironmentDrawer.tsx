@@ -50,6 +50,8 @@ import {
   getAmpVersionHelm,
   getIsolationTierMeta,
   getRawScriptUrl,
+  useConfirmIfUnsaved,
+  useUnsavedChangesGuard,
 } from "@agent-management-platform/shared-component";
 import {
   createEnvironmentSchema,
@@ -313,6 +315,21 @@ export function CreateEnvironmentDrawer({
     }
   }, [planes, formData.dataplaneRef]);
 
+  // The auto-selected default data plane isn't a user edit.
+  const defaultPlaneName = planes[0]?.name;
+  const isDirty = useMemo(() => {
+    if (!open) return false;
+    const current = JSON.stringify({ ...formData, dataplaneRef: "" });
+    const autoDefault = formData.dataplaneRef === "" ||
+      formData.dataplaneRef === defaultPlaneName;
+    return !autoDefault || current !== JSON.stringify(DEFAULT_FORM);
+  }, [open, formData, defaultPlaneName]);
+  useUnsavedChangesGuard(isDirty);
+  const confirmIfUnsaved = useConfirmIfUnsaved();
+  // Backdrop and header X discard edits, so confirm first; Cancel and the
+  // post-save close stay direct.
+  const handleGuardedClose = () => confirmIfUnsaved(onClose, isDirty);
+
   const handleChange = useCallback(
     (field: keyof CreateEnvironmentFormValues, value: string | boolean) => {
       setFormData((prev) => {
@@ -468,11 +485,11 @@ export function CreateEnvironmentDrawer({
   );
 
   return (
-    <DrawerWrapper open={open} onClose={onClose}>
+    <DrawerWrapper open={open} onClose={handleGuardedClose}>
       <DrawerHeader
         icon={<Plus size={24} />}
         title="Create Environment"
-        onClose={onClose}
+        onClose={handleGuardedClose}
       />
       <DrawerContent>
         <Stack spacing={3}>

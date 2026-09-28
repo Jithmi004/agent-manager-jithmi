@@ -42,7 +42,10 @@ import {
 } from "@wso2/oxygen-ui";
 import { Plus, Trash, Book } from "@wso2/oxygen-ui-icons-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useConfirmationDialog } from "@agent-management-platform/shared-component";
+import {
+  useConfirmationDialog,
+  useUnsavedChangesGuard,
+} from "@agent-management-platform/shared-component";
 
 interface EvaluatorDetailsDrawerProps {
   evaluator: EvaluatorResponse | null;
@@ -463,6 +466,7 @@ export function EvaluatorDetailsDrawer({
     () => JSON.stringify(configValues) !== JSON.stringify(savedConfig),
     [configValues, savedConfig],
   );
+  useUnsavedChangesGuard(open && isDirty);
 
   const handleRequestClose = useCallback(() => {
     if (!isDirty) {

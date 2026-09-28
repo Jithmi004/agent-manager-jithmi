@@ -16,7 +16,13 @@
  * under the License.
  */
 
-import React, { useCallback, useRef, useState, useEffect } from "react";
+import React, {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  useEffect,
+} from "react";
 import { generatePath, useLocation, useParams } from "react-router-dom";
 import {
   absoluteRouteMap,
@@ -30,6 +36,7 @@ import {
   useUpdateCustomEvaluator,
 } from "@agent-management-platform/api-client";
 import { PageLayout } from "@agent-management-platform/views";
+import { useUnsavedChangesGuard } from "@agent-management-platform/shared-component";
 import {
   Alert,
   Autocomplete,
@@ -657,6 +664,15 @@ export const ViewEvaluatorOrganization: React.FC = () => {
     configSchema: [],
     tags: [],
   });
+  const [initialEditValues, setInitialEditValues] =
+    useState<EditValues | null>(null);
+  const isDirty = useMemo(
+    () =>
+      isEditing &&
+      JSON.stringify(editValues) !== JSON.stringify(initialEditValues),
+    [isEditing, editValues, initialEditValues],
+  );
+  useUnsavedChangesGuard(isDirty);
 
   const providersRegistered = useRef(false);
   const providerDisposablesRef = useRef<{ dispose(): void }[]>([]);
@@ -757,13 +773,15 @@ export const ViewEvaluatorOrganization: React.FC = () => {
       }
     }
 
-    setEditValues({
+    const nextEditValues: EditValues = {
       displayName: evaluator.displayName,
       description: evaluator.description,
       source,
       configSchema,
       tags: evaluator.tags ?? [],
-    });
+    };
+    setEditValues(nextEditValues);
+    setInitialEditValues(nextEditValues);
     setIsEditing(true);
   }, [evaluator]);
 

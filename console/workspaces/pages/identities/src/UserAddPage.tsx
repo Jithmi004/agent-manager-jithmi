@@ -25,6 +25,7 @@ import {
 } from "@agent-management-platform/views";
 import { useNavigate, useParams, generatePath } from "react-router-dom";
 import { useCreateUser } from "@agent-management-platform/api-client";
+import { useUnsavedChangesGuard } from "@agent-management-platform/shared-component";
 import { absoluteRouteMap, INPUT_LIMITS } from "@agent-management-platform/types";
 import { addUserSchema, type AddUserFormValues } from "./forms/schemas";
 
@@ -55,7 +56,8 @@ export const UserAddPage: React.FC = () => {
 
   const { errors, validateField, validateForm, clearErrors, setFieldError } =
     useFormValidation<AddUserFormValues>(addUserSchema);
-  const { checkDirty, resetDirty } = useDirtyState(formData);
+  const { isDirty, checkDirty, resetDirty } = useDirtyState(formData);
+  const { allowNavigation } = useUnsavedChangesGuard(isDirty);
   const [lastSubmittedValidationErrors, setLastSubmittedValidationErrors] =
     useState<typeof errors>({});
 
@@ -102,7 +104,7 @@ export const UserAddPage: React.FC = () => {
       });
       resetDirty();
       clearErrors();
-      navigate(usersPath);
+      allowNavigation(() => navigate(usersPath));
     } catch {
       // createError state is set by React Query and displayed in the Alert above
     }
@@ -114,6 +116,7 @@ export const UserAddPage: React.FC = () => {
     orgId,
     resetDirty,
     clearErrors,
+    allowNavigation,
     navigate,
     usersPath,
   ]);
@@ -234,7 +237,7 @@ export const UserAddPage: React.FC = () => {
             <Button
               variant="outlined"
               color="primary"
-              onClick={() => navigate(usersPath)}
+              onClick={() => allowNavigation(() => navigate(usersPath))}
               disabled={loading}
             >
               Cancel
