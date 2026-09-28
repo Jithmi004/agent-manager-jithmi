@@ -34,6 +34,7 @@ import {
   useFormValidation,
   useDirtyState,
 } from "@agent-management-platform/views";
+import { useUnsavedChangesGuard } from "@agent-management-platform/shared-component";
 import { absoluteRouteMap, INPUT_LIMITS } from "@agent-management-platform/types";
 import { inviteUserSchema, type InviteUserFormValues } from "./forms/schemas";
 
@@ -47,7 +48,8 @@ export const UserInvitePage: React.FC = () => {
 
   const { errors, validateField, validateForm, clearErrors, setFieldError } =
     useFormValidation<InviteUserFormValues>(inviteUserSchema);
-  const { checkDirty, resetDirty } = useDirtyState(formData);
+  const { isDirty, checkDirty, resetDirty } = useDirtyState(formData);
+  const { allowNavigation } = useUnsavedChangesGuard(isDirty && inviteLink == null);
   const [lastSubmittedValidationErrors, setLastSubmittedValidationErrors] =
     useState<typeof errors>({});
 
@@ -166,7 +168,7 @@ export const UserInvitePage: React.FC = () => {
                 <Button
                   variant="outlined"
                   color="primary"
-                  onClick={() => navigate(usersPath)}
+                  onClick={() => allowNavigation(() => navigate(usersPath))}
                   disabled={isInviting}
                 >
                   Cancel

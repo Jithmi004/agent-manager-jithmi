@@ -24,6 +24,7 @@ import {
   useFormValidation,
   useDirtyState,
 } from "@agent-management-platform/views";
+import { useUnsavedChangesGuard } from "@agent-management-platform/shared-component";
 import { absoluteRouteMap, INPUT_LIMITS } from "@agent-management-platform/types";
 import {
   createRoleSchema,
@@ -42,7 +43,8 @@ export const RoleCreatePage: React.FC = () => {
 
   const { errors, validateField, validateForm, clearErrors, setFieldError } =
     useFormValidation<CreateRoleFormValues>(createRoleSchema);
-  const { checkDirty, resetDirty } = useDirtyState(formData);
+  const { isDirty, checkDirty, resetDirty } = useDirtyState(formData);
+  const { allowNavigation } = useUnsavedChangesGuard(isDirty);
   const [lastSubmittedValidationErrors, setLastSubmittedValidationErrors] =
     useState<typeof errors>({});
 
@@ -87,11 +89,13 @@ export const RoleCreatePage: React.FC = () => {
       });
       resetDirty();
       clearErrors();
-      navigate(
-        generatePath(
-          absoluteRouteMap.children.org.children.settings.children.identities
-            .children.roles.children.detail.path,
-          { orgId, roleId: created.id },
+      allowNavigation(() =>
+        navigate(
+          generatePath(
+            absoluteRouteMap.children.org.children.settings.children.identities
+              .children.roles.children.detail.path,
+            { orgId, roleId: created.id },
+          ),
         ),
       );
     } catch {
@@ -105,6 +109,7 @@ export const RoleCreatePage: React.FC = () => {
     orgId,
     resetDirty,
     clearErrors,
+    allowNavigation,
     navigate,
   ]);
 
@@ -173,7 +178,7 @@ export const RoleCreatePage: React.FC = () => {
             <Button
               variant="outlined"
               color="primary"
-              onClick={() => navigate(rolesPath)}
+              onClick={() => allowNavigation(() => navigate(rolesPath))}
             >
               Cancel
             </Button>

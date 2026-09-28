@@ -187,7 +187,7 @@ services:
       # agent-manager-service already lists it. Override to empty to opt out.
       - AUTH_RESOURCE=${AUTH_RESOURCE:-urn:wso2:amp}
       - GATEWAY_CONTROL_PLANE_URL=http://localhost:9243
-      - GATEWAY_VERSION=v0.11.0
+      - GATEWAY_VERSION=v2026.09.24
       # Agent Manager release version — pins the deployment-script git tag (amp/vX.Y.Z).
       # Keep in sync with the agent-manager-service AMP_VERSION above.
       - AMP_VERSION=v0.16.0

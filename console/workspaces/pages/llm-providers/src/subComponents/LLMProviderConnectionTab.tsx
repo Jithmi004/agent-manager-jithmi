@@ -40,7 +40,10 @@ import {
   TextField,
 } from "@wso2/oxygen-ui";
 import { Eye, EyeOff } from "@wso2/oxygen-ui-icons-react";
-import { ResilienceTimeoutFields } from "@agent-management-platform/shared-component";
+import {
+  ResilienceTimeoutFields,
+  useUnsavedChangesGuard,
+} from "@agent-management-platform/shared-component";
 
 const MASKED_CREDENTIAL_VALUE = "••••••••••••";
 
@@ -203,6 +206,8 @@ export function LLMProviderConnectionTab({
     setResilienceIdleTimeoutError(null);
     setStatus(null);
   }, [providerData]);
+
+  useUnsavedChangesGuard(isDirty);
 
   const handleSave = useCallback(async () => {
     if (!providerData) return;

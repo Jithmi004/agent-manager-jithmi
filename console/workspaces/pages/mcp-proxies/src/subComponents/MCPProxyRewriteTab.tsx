@@ -50,6 +50,7 @@ import {
   INPUT_LIMITS,
 } from "@agent-management-platform/types";
 import { TextInput } from "@agent-management-platform/views";
+import { useUnsavedChangesGuard } from "@agent-management-platform/shared-component";
 import { REWRITE_POLICY_NAME } from "../constants";
 import type { CapabilityKind } from "./mcpEndpoints";
 
@@ -421,6 +422,9 @@ export function MCPProxyRewriteTab({
 
   const hasAnyCapability = meta.length > 0;
 
+  // lastSavedRef is a ref, so a save bumps this to recompute isDirty at once
+  // (otherwise the unsaved-changes guard stays armed until a refetch).
+  const [savedVersion, setSavedVersion] = useState(0);
   const isDirty = useMemo(() => {
     const saved = lastSavedRef.current;
     if (!saved) return false;
@@ -428,8 +432,10 @@ export function MCPProxyRewriteTab({
     // When disabled, only the toggle matters; field edits are ignored.
     if (!enabled) return false;
     return JSON.stringify(saved.state) !== JSON.stringify(state);
-  }, [enabled, state]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- savedVersion marks a ref update
+  }, [enabled, state, savedVersion]);
 
+  useUnsavedChangesGuard(isDirty);
   const updateTool = useCallback(
     (backendId: string, patch: Partial<ToolEntry>) => {
       setState((prev) => ({
@@ -508,6 +514,7 @@ export function MCPProxyRewriteTab({
     try {
       await onUpdate({ policies: nextPolicies });
       lastSavedRef.current = { enabled, state };
+      setSavedVersion((v) => v + 1);
       setStatus({
         message: enabled
           ? "Rewrite policy updated successfully."

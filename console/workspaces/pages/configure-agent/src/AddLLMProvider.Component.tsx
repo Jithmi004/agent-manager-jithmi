@@ -71,6 +71,7 @@ import {
   PolicyListSection,
   type PolicySelection as GuardrailSelection,
   usePipelineEnvironmentsState,
+  useUnsavedChangesGuard,
 } from "@agent-management-platform/shared-component";
 import { ProviderSelectDrawer } from "./ProviderSelectDrawer";
 import { ConfigNameSection } from "./Configure/subComponents/ConfigNameSection";
@@ -392,6 +393,22 @@ export const AddLLMProviderComponent: React.FC = () => {
   // environments use different providers there is no single obvious default.
   const [configName, setConfigName] = useState("");
   const configNameEditedRef = useRef(false);
+  // Edit mode snapshots the form once it has been seeded from the saved config.
+  const [isSeeded, setIsSeeded] = useState(false);
+  const formSnapshot = JSON.stringify({
+    providerByEnv,
+    guardrailsByEnv,
+    envVarNames,
+    configName,
+  });
+  const [baseline, setBaseline] = useState<string | null>(() =>
+    isEditMode ? null : formSnapshot,
+  );
+  useEffect(() => {
+    if (isSeeded && baseline === null) setBaseline(formSnapshot);
+  }, [isSeeded, baseline, formSnapshot]);
+  const isDirty = baseline !== null && formSnapshot !== baseline;
+  const { allowNavigation } = useUnsavedChangesGuard(isDirty);
 
   const backHref =
     orgId && projectId && agentId
@@ -514,6 +531,7 @@ export const AddLLMProviderComponent: React.FC = () => {
       setConfigName(existingConfig.name);
       configNameEditedRef.current = true;
     }
+    setIsSeeded(true);
   }, [existingConfig, isEditMode]);
 
   // Auto-generate env var names from the selected provider's template in create mode
@@ -679,7 +697,7 @@ export const AddLLMProviderComponent: React.FC = () => {
         },
         {
           onSuccess: () => {
-            navigate(backHref);
+            allowNavigation(() => navigate(backHref));
           },
         },
       );
@@ -707,15 +725,17 @@ export const AddLLMProviderComponent: React.FC = () => {
                 authInfoByEnv[envName] = mapping.configuration.authInfo;
               }
             }
-            navigate(
-              generatePath(
-                absoluteRouteMap.children.org.children.projects.children.agents
-                  .children.configure.children.llmProviders.children.view.path,
-                { orgId, projectId, agentId, configId: data.uuid },
+            allowNavigation(() =>
+              navigate(
+                generatePath(
+                  absoluteRouteMap.children.org.children.projects.children.agents
+                    .children.configure.children.llmProviders.children.view.path,
+                  { orgId, projectId, agentId, configId: data.uuid },
+                ),
+                {
+                  state: { authInfoByEnv },
+                },
               ),
-              {
-                state: { authInfoByEnv },
-              },
             );
           },
         },
@@ -738,6 +758,7 @@ export const AddLLMProviderComponent: React.FC = () => {
     createConfig,
     updateConfig,
     navigate,
+    allowNavigation,
     backHref,
   ]);
 
@@ -1098,7 +1119,7 @@ export const AddLLMProviderComponent: React.FC = () => {
 
         {/* Actions */}
         <Box sx={{ display: "flex", gap: 1 }}>
-          <Button variant="outlined" onClick={() => navigate(backHref)}>
+          <Button variant="outlined" onClick={() => allowNavigation(() => navigate(backHref))}>
             Cancel
           </Button>
           <Tooltip

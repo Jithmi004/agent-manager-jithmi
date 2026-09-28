@@ -54,6 +54,7 @@ import {
   EnvironmentVariablesReference,
   usePipelineEnvironmentsState,
   useMCPProxySecurity,
+  useUnsavedChangesGuard,
 } from "@agent-management-platform/shared-component";
 import { ConfigNameSection } from "./ConfigNameSection";
 import { MCPServerDisplay } from "./MCPServerDisplay";
@@ -124,6 +125,9 @@ export function AddMCPToolConfigPanel({
   const envVarNamesEditedRef = useRef(false);
 
   const createConfig = useCreateAgentMCPConfig();
+
+  const isDirty = open && (selectedProxyId !== null || configName.trim() !== "");
+  const { allowNavigation } = useUnsavedChangesGuard(isDirty);
 
   // Reset to a clean slate every time the drawer opens.
   useEffect(() => {
@@ -246,18 +250,20 @@ export function AddMCPToolConfigPanel({
           // Land on the newly created configuration and open the "Connect to MCP
           // Server" panel straight away (ViewMCPServer reads state.openEnvPanel /
           // state.authInfoByEnv).
-          navigate(
-            generatePath(
-              absoluteRouteMap.children.org.children.projects.children.agents
-                .children.configure.children.mcpProxies.children.view.path,
-              {
-                orgId,
-                projectId,
-                agentId,
-                proxyId: encodeURIComponent(data.uuid),
-              },
+          allowNavigation(() =>
+            navigate(
+              generatePath(
+                absoluteRouteMap.children.org.children.projects.children.agents
+                  .children.configure.children.mcpProxies.children.view.path,
+                {
+                  orgId,
+                  projectId,
+                  agentId,
+                  proxyId: encodeURIComponent(data.uuid),
+                },
+              ),
+              { state: { openEnvPanel: true, authInfoByEnv } },
             ),
-            { state: { openEnvPanel: true, authInfoByEnv } },
           );
         },
       },
@@ -276,6 +282,7 @@ export function AddMCPToolConfigPanel({
     createConfig,
     onClose,
     navigate,
+    allowNavigation,
   ]);
 
   const canSave =
