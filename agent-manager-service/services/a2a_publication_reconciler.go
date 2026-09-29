@@ -28,6 +28,7 @@ import (
 
 	"github.com/wso2/agent-manager/agent-manager-service/clients/openchoreosvc/client"
 	"github.com/wso2/agent-manager/agent-manager-service/models"
+	"github.com/wso2/agent-manager/agent-manager-service/orgctx"
 	"github.com/wso2/agent-manager/agent-manager-service/repositories"
 )
 
@@ -166,7 +167,7 @@ func (s *a2aPublicationReconcilerService) checkUpstreamDrift(ctx context.Context
 	}
 
 	for _, pub := range rows {
-		current, err := s.ocClient.GetReleaseBindingServiceURL(ctx, pub.OUID, pub.AgentName, pub.EnvironmentName)
+		current, err := s.ocClient.GetReleaseBindingServiceURL(actingAsOrg(ctx, pub), pub.OUID, pub.AgentName, pub.EnvironmentName)
 		if err != nil || current == "" || current == pub.PublishedUpstreamURL {
 			continue
 		}
@@ -184,9 +185,18 @@ func (s *a2aPublicationReconcilerService) checkUpstreamDrift(ctx context.Context
 	}
 }
 
+// actingAsOrg carries the publication's org the way a request would. The
+// OpenChoreo client stamps its impersonation header from the context's resolved
+// org, which only the HTTP middleware sets, so without this a reconciler call
+// reaches OpenChoreo with no org and a platform that requires one rejects it.
+func actingAsOrg(ctx context.Context, pub models.A2APublication) context.Context {
+	return orgctx.WithResolvedOrg(ctx, orgctx.ResolvedOrg{OUID: pub.OUID})
+}
+
 // publishOne emits one agent-environment pair's Agent resource, or schedules a
 // retry when it cannot yet.
 func (s *a2aPublicationReconcilerService) publishOne(ctx context.Context, pub models.A2APublication) {
+	ctx = actingAsOrg(ctx, pub)
 	upstreamURL, err := s.attemptPublish(ctx, pub)
 	if err != nil {
 		s.recordAttemptFailure(ctx, pub, err)
