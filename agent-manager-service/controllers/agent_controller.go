@@ -54,6 +54,8 @@ type AgentController interface {
 	GenerateName(w http.ResponseWriter, r *http.Request)
 	GetAgentResourceConfigs(w http.ResponseWriter, r *http.Request)
 	UpdateAgentResourceConfigs(w http.ResponseWriter, r *http.Request)
+	GetAgentProbeConfigs(w http.ResponseWriter, r *http.Request)
+	UpdateAgentProbeConfigs(w http.ResponseWriter, r *http.Request)
 	PublishKind(w http.ResponseWriter, r *http.Request)
 	PromoteAgent(w http.ResponseWriter, r *http.Request)
 	UpdateAgentDeploySettings(w http.ResponseWriter, r *http.Request)
@@ -506,6 +508,65 @@ func (c *agentController) UpdateAgentResourceConfigs(w http.ResponseWriter, r *h
 	}
 
 	utils.WriteSuccessResponse(w, http.StatusOK, resourceConfigs)
+}
+
+func (c *agentController) GetAgentProbeConfigs(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.GetLogger(ctx)
+
+	ouID := middleware.OUIDFromRequest(r)
+	projName := r.PathValue(utils.PathParamProjName)
+	agentName := r.PathValue(utils.PathParamAgentName)
+	environment := r.URL.Query().Get("environment")
+
+	if environment == "" {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "environment query parameter is required")
+		return
+	}
+
+	configs, err := c.agentService.GetAgentProbeConfigs(ctx, ouID, projName, agentName, environment)
+	if err != nil {
+		log.Error("GetAgentProbeConfigs: failed to get agent probe configurations", "error", err)
+		handleCommonErrors(w, err, "Failed to get agent probe configurations")
+		return
+	}
+
+	utils.WriteSuccessResponse(w, http.StatusOK, configs)
+}
+
+func (c *agentController) UpdateAgentProbeConfigs(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.GetLogger(ctx)
+
+	ouID := middleware.OUIDFromRequest(r)
+	projName := r.PathValue(utils.PathParamProjName)
+	agentName := r.PathValue(utils.PathParamAgentName)
+	environment := r.URL.Query().Get("environment")
+
+	if environment == "" {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "environment query parameter is required")
+		return
+	}
+
+	var payload spec.UpdateAgentProbeConfigsRequest
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		log.Error("UpdateAgentProbeConfigs: failed to decode request body", "error", err)
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if err := utils.ValidateAgentProbeConfigsPayload(payload); err != nil {
+		utils.WriteValidationErrorResponse(w, err)
+		return
+	}
+
+	configs, err := c.agentService.UpdateAgentProbeConfigs(ctx, ouID, projName, agentName, environment, &payload)
+	if err != nil {
+		log.Error("UpdateAgentProbeConfigs: failed to update agent probe configurations", "error", err)
+		handleCommonErrors(w, err, "Failed to update agent probe configurations")
+		return
+	}
+
+	utils.WriteSuccessResponse(w, http.StatusOK, configs)
 }
 
 func (c *agentController) DeleteAgent(w http.ResponseWriter, r *http.Request) {

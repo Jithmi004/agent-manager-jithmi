@@ -66,6 +66,8 @@ type AgentManagerService interface {
 	GenerateName(ctx context.Context, ouID string, payload spec.ResourceNameRequest) (string, error)
 	GetAgentResourceConfigs(ctx context.Context, ouID string, projectName string, agentName string, environment string) (*spec.AgentResourceConfigsResponse, error)
 	UpdateAgentResourceConfigs(ctx context.Context, ouID string, projectName string, agentName string, environment string, req *spec.UpdateAgentResourceConfigsRequest) (*spec.AgentResourceConfigsResponse, error)
+	GetAgentProbeConfigs(ctx context.Context, ouID string, projectName string, agentName string, environment string) (*spec.AgentProbeConfigsResponse, error)
+	UpdateAgentProbeConfigs(ctx context.Context, ouID string, projectName string, agentName string, environment string, req *spec.UpdateAgentProbeConfigsRequest) (*spec.AgentProbeConfigsResponse, error)
 	PromoteAgent(ctx context.Context, ouID string, projectName string, agentName string, req *spec.PromoteAgentRequest) error
 	UpdateAgentDeploySettings(ctx context.Context, ouID string, projectName string, agentName string, req *spec.UpdateAgentDeploySettingsRequest) error
 	UpdateAgentConfigurations(ctx context.Context, ouID string, projectName string, agentName string, req *spec.UpdateAgentConfigurationsRequest) error
@@ -2296,6 +2298,115 @@ func (s *agentManagerService) UpdateAgentResourceConfigs(ctx context.Context, ou
 
 	s.logger.Info("Agent resource configurations updated successfully", "agentName", agentName, "ouID", ouID, "projectName", projectName, "environment", environment)
 	return updatedConfigs, nil
+}
+
+// validateAgentEnvironment checks that the organization, project, agent and environment named in a
+// request all exist, translating each lookup failure to its not-found error.
+func (s *agentManagerService) validateAgentEnvironment(ctx context.Context, ouID, projectName, agentName, environment string) error {
+	if _, err := s.ocClient.GetOrganization(ctx, ouID); err != nil {
+		s.logger.Error("Failed to find organization", "ouID", ouID, "error", err)
+		return translateOrgError(err)
+	}
+	if _, err := s.ocClient.GetProject(ctx, ouID, projectName); err != nil {
+		s.logger.Error("Failed to find project", "projectName", projectName, "org", ouID, "error", err)
+		return translateProjectError(err)
+	}
+	if _, err := s.ocClient.GetComponent(ctx, ouID, projectName, agentName); err != nil {
+		s.logger.Error("Failed to fetch agent", "agentName", agentName, "ouID", ouID, "projectName", projectName, "error", err)
+		return translateAgentError(err)
+	}
+	if _, err := s.ocClient.GetEnvironment(ctx, ouID, environment); err != nil {
+		s.logger.Error("Failed to validate environment", "environment", environment, "ouID", ouID, "error", err)
+		return translateEnvironmentError(err)
+	}
+	return nil
+}
+
+func (s *agentManagerService) GetAgentProbeConfigs(ctx context.Context, ouID string, projectName string, agentName string, environment string) (*spec.AgentProbeConfigsResponse, error) {
+	s.logger.Info("Getting agent probe configurations", "agentName", agentName, "ouID", ouID, "projectName", projectName, "environment", environment)
+
+	if err := s.validateAgentEnvironment(ctx, ouID, projectName, agentName, environment); err != nil {
+		return nil, err
+	}
+
+	configs, err := s.ocClient.GetEnvProbeConfigs(ctx, ouID, projectName, agentName, environment)
+	if err != nil {
+		s.logger.Error("Failed to fetch agent probe configurations", "agentName", agentName, "ouID", ouID, "projectName", projectName, "environment", environment, "error", err)
+		return nil, fmt.Errorf("failed to get agent probe configurations: %w", err)
+	}
+	return buildProbeConfigsResponse(configs), nil
+}
+
+func (s *agentManagerService) UpdateAgentProbeConfigs(ctx context.Context, ouID string, projectName string, agentName string, environment string, req *spec.UpdateAgentProbeConfigsRequest) (*spec.AgentProbeConfigsResponse, error) {
+	s.logger.Info("Updating agent probe configurations", "agentName", agentName, "ouID", ouID, "projectName", projectName, "environment", environment)
+
+	if err := s.validateAgentEnvironment(ctx, ouID, projectName, agentName, environment); err != nil {
+		return nil, err
+	}
+
+	updateReq := client.ComponentProbeConfigs{
+		Startup:   convertSpecProbeConfigToClient(req.Startup),
+		Readiness: convertSpecProbeConfigToClient(req.Readiness),
+		Liveness:  convertSpecProbeConfigToClient(req.Liveness),
+	}
+	if err := s.ocClient.UpdateEnvProbeConfigs(ctx, ouID, projectName, agentName, environment, updateReq); err != nil {
+		s.logger.Error("Failed to update agent probe configurations in OpenChoreo", "agentName", agentName, "ouID", ouID, "projectName", projectName, "environment", environment, "error", err)
+		if utils.IsValidationError(err) != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("failed to update agent probe configurations: %w", err)
+	}
+
+	updated, err := s.ocClient.GetEnvProbeConfigs(ctx, ouID, projectName, agentName, environment)
+	if err != nil {
+		s.logger.Error("Failed to fetch updated probe configurations", "agentName", agentName, "ouID", ouID, "projectName", projectName, "environment", environment, "error", err)
+		return nil, fmt.Errorf("failed to get agent probe configurations: %w", err)
+	}
+
+	s.logger.Info("Agent probe configurations updated successfully", "agentName", agentName, "ouID", ouID, "projectName", projectName, "environment", environment)
+	return buildProbeConfigsResponse(updated), nil
+}
+
+// buildProbeConfigsResponse converts the client's resolved probes to the API response.
+func buildProbeConfigsResponse(configs *client.EnvProbeConfigsResponse) *spec.AgentProbeConfigsResponse {
+	return spec.NewAgentProbeConfigsResponse(
+		convertClientProbeConfigToSpec(configs.Probes.Startup),
+		convertClientProbeConfigToSpec(configs.Probes.Readiness),
+		convertClientProbeConfigToSpec(configs.Probes.Liveness),
+		configs.RedeployRequired,
+	)
+}
+
+// convertSpecProbeConfigToClient maps an API probe to the client type. Nil stays nil, meaning
+// "leave this probe unchanged".
+func convertSpecProbeConfigToClient(p *spec.AgentProbeConfig) *client.ProbeConfig {
+	if p == nil {
+		return nil
+	}
+	return &client.ProbeConfig{
+		Enabled:             p.Enabled,
+		Type:                p.Type,
+		Path:                p.Path,
+		InitialDelaySeconds: p.InitialDelaySeconds,
+		PeriodSeconds:       p.PeriodSeconds,
+		TimeoutSeconds:      p.TimeoutSeconds,
+		FailureThreshold:    p.FailureThreshold,
+	}
+}
+
+func convertClientProbeConfigToSpec(p *client.ProbeConfig) spec.AgentProbeConfig {
+	if p == nil {
+		return spec.AgentProbeConfig{}
+	}
+	return spec.AgentProbeConfig{
+		Enabled:             p.Enabled,
+		Type:                p.Type,
+		Path:                p.Path,
+		InitialDelaySeconds: p.InitialDelaySeconds,
+		PeriodSeconds:       p.PeriodSeconds,
+		TimeoutSeconds:      p.TimeoutSeconds,
+		FailureThreshold:    p.FailureThreshold,
+	}
 }
 
 // buildUpdateResourceConfigsRequest converts spec request to client request

@@ -142,6 +142,69 @@ func ValidateAgentResourceConfigsPayload(payload spec.UpdateAgentResourceConfigs
 	return nil
 }
 
+// Probe field bounds. They match the AgentProbeConfig schema in docs/api_v1_openapi.yaml and the
+// probes schema in component-types/agent-api.yaml, which OpenChoreo enforces again at render time.
+const (
+	maxProbeSeconds          = 3600
+	maxProbeFailureThreshold = 1000
+	maxProbePathLength       = 1024
+)
+
+// ValidateAgentProbeConfigsPayload checks the fields present in a probe update. Rules that depend on
+// the merged result (an http check needs a path; the startup window cap) are checked once the
+// update is merged with the stored overrides, in the OpenChoreo client.
+func ValidateAgentProbeConfigsPayload(payload spec.UpdateAgentProbeConfigsRequest) error {
+	if payload.Startup == nil && payload.Readiness == nil && payload.Liveness == nil {
+		return fmt.Errorf("at least one of startup, readiness or liveness is required")
+	}
+	for _, probe := range []struct {
+		name   string
+		config *spec.AgentProbeConfig
+	}{
+		{"startup", payload.Startup},
+		{"readiness", payload.Readiness},
+		{"liveness", payload.Liveness},
+	} {
+		if err := validateAgentProbeConfig(probe.name, probe.config); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateAgentProbeConfig(name string, p *spec.AgentProbeConfig) error {
+	if p == nil {
+		return nil
+	}
+	if p.Type != nil && *p.Type != "tcp" && *p.Type != "http" {
+		return fmt.Errorf("%s probe type must be tcp or http", name)
+	}
+	if p.Path != nil {
+		if !strings.HasPrefix(*p.Path, "/") {
+			return fmt.Errorf("%s probe path must start with /", name)
+		}
+		if len(*p.Path) > maxProbePathLength {
+			return fmt.Errorf("%s probe path must be at most %d characters", name, maxProbePathLength)
+		}
+	}
+	checkRange := func(field string, v *int32, lowest int32, highest int32) error {
+		if v != nil && (*v < lowest || *v > highest) {
+			return fmt.Errorf("%s probe %s must be between %d and %d", name, field, lowest, highest)
+		}
+		return nil
+	}
+	if err := checkRange("initialDelaySeconds", p.InitialDelaySeconds, 0, maxProbeSeconds); err != nil {
+		return err
+	}
+	if err := checkRange("periodSeconds", p.PeriodSeconds, 1, maxProbeSeconds); err != nil {
+		return err
+	}
+	if err := checkRange("timeoutSeconds", p.TimeoutSeconds, 1, maxProbeSeconds); err != nil {
+		return err
+	}
+	return checkRange("failureThreshold", p.FailureThreshold, 1, maxProbeFailureThreshold)
+}
+
 func validateAutoScalingConfig(cfg *spec.AutoScalingConfig, maxReplicas int) error {
 	if cfg == nil {
 		return nil

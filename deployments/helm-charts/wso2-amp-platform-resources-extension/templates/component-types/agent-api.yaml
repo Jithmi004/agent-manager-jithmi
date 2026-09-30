@@ -135,6 +135,130 @@ spec:
           default: ""
         autoscaling:
           $ref: "#/$defs/AutoscalingConfig"
+        # Health probes for the agent container, per environment. The defaults
+        # reproduce the fixed probes agents had before this was configurable: TCP
+        # startup and readiness checks on the first endpoint port, and no liveness
+        # check. `type: http` sends a GET to `path` on the same port instead.
+        # The defaults must match defaultAgentProbes in agent-manager-service
+        # (clients/openchoreosvc/client/probes.go), which a unit test enforces.
+        probes:
+          type: object
+          default: {}
+          properties:
+            startup:
+              type: object
+              default: {}
+              properties:
+                enabled:
+                  type: boolean
+                  default: true
+                type:
+                  type: string
+                  enum:
+                    - tcp
+                    - http
+                  default: tcp
+                path:
+                  type: string
+                  pattern: '^/'
+                  maxLength: 1024
+                  default: /health
+                initialDelaySeconds:
+                  type: integer
+                  minimum: 0
+                  maximum: 3600
+                  default: 10
+                periodSeconds:
+                  type: integer
+                  minimum: 1
+                  maximum: 3600
+                  default: 5
+                timeoutSeconds:
+                  type: integer
+                  minimum: 1
+                  maximum: 3600
+                  default: 1
+                failureThreshold:
+                  type: integer
+                  minimum: 1
+                  maximum: 1000
+                  default: 60
+            readiness:
+              type: object
+              default: {}
+              properties:
+                enabled:
+                  type: boolean
+                  default: true
+                type:
+                  type: string
+                  enum:
+                    - tcp
+                    - http
+                  default: tcp
+                path:
+                  type: string
+                  pattern: '^/'
+                  maxLength: 1024
+                  default: /health
+                initialDelaySeconds:
+                  type: integer
+                  minimum: 0
+                  maximum: 3600
+                  default: 0
+                periodSeconds:
+                  type: integer
+                  minimum: 1
+                  maximum: 3600
+                  default: 5
+                timeoutSeconds:
+                  type: integer
+                  minimum: 1
+                  maximum: 3600
+                  default: 1
+                failureThreshold:
+                  type: integer
+                  minimum: 1
+                  maximum: 1000
+                  default: 6
+            liveness:
+              type: object
+              default: {}
+              properties:
+                enabled:
+                  type: boolean
+                  default: false
+                type:
+                  type: string
+                  enum:
+                    - tcp
+                    - http
+                  default: tcp
+                path:
+                  type: string
+                  pattern: '^/'
+                  maxLength: 1024
+                  default: /health
+                initialDelaySeconds:
+                  type: integer
+                  minimum: 0
+                  maximum: 3600
+                  default: 0
+                periodSeconds:
+                  type: integer
+                  minimum: 1
+                  maximum: 3600
+                  default: 10
+                timeoutSeconds:
+                  type: integer
+                  minimum: 1
+                  maximum: 3600
+                  default: 1
+                failureThreshold:
+                  type: integer
+                  minimum: 1
+                  maximum: 1000
+                  default: 3
 
   resources:
     - id: sandbox-template
@@ -197,17 +321,45 @@ spec:
                     limits:
                       cpu: ${environmentConfigs.resources.limits.?cpu.orValue(parameters.resources.limits.cpu)}
                       memory: ${environmentConfigs.resources.limits.?memory.orValue(parameters.resources.limits.memory)}
-                  startupProbe:
-                    tcpSocket:
-                      port: ${workload.endpoints.transformList(name, ep, [ep.port]).flatten()[0]}
-                    periodSeconds: 5
-                    failureThreshold: 60
-                    initialDelaySeconds: 10
-                  readinessProbe:
-                    tcpSocket:
-                      port: ${workload.endpoints.transformList(name, ep, [ep.port]).flatten()[0]}
-                    periodSeconds: 5
-                    failureThreshold: 6
+                  # Each probe renders from environmentConfigs.probes.<name>: omitted when
+                  # disabled, otherwise the timings plus either a tcpSocket or an httpGet
+                  # check against the first endpoint port.
+                  startupProbe: |
+                    ${environmentConfigs.probes.startup.enabled ? oc_merge(
+                      {
+                        "initialDelaySeconds": environmentConfigs.probes.startup.initialDelaySeconds,
+                        "periodSeconds": environmentConfigs.probes.startup.periodSeconds,
+                        "timeoutSeconds": environmentConfigs.probes.startup.timeoutSeconds,
+                        "failureThreshold": environmentConfigs.probes.startup.failureThreshold
+                      },
+                      environmentConfigs.probes.startup.type == "http"
+                        ? {"httpGet": {"path": environmentConfigs.probes.startup.path, "port": workload.endpoints.transformList(name, ep, [ep.port]).flatten()[0]}}
+                        : {"tcpSocket": {"port": workload.endpoints.transformList(name, ep, [ep.port]).flatten()[0]}}
+                    ) : oc_omit()}
+                  readinessProbe: |
+                    ${environmentConfigs.probes.readiness.enabled ? oc_merge(
+                      {
+                        "initialDelaySeconds": environmentConfigs.probes.readiness.initialDelaySeconds,
+                        "periodSeconds": environmentConfigs.probes.readiness.periodSeconds,
+                        "timeoutSeconds": environmentConfigs.probes.readiness.timeoutSeconds,
+                        "failureThreshold": environmentConfigs.probes.readiness.failureThreshold
+                      },
+                      environmentConfigs.probes.readiness.type == "http"
+                        ? {"httpGet": {"path": environmentConfigs.probes.readiness.path, "port": workload.endpoints.transformList(name, ep, [ep.port]).flatten()[0]}}
+                        : {"tcpSocket": {"port": workload.endpoints.transformList(name, ep, [ep.port]).flatten()[0]}}
+                    ) : oc_omit()}
+                  livenessProbe: |
+                    ${environmentConfigs.probes.liveness.enabled ? oc_merge(
+                      {
+                        "initialDelaySeconds": environmentConfigs.probes.liveness.initialDelaySeconds,
+                        "periodSeconds": environmentConfigs.probes.liveness.periodSeconds,
+                        "timeoutSeconds": environmentConfigs.probes.liveness.timeoutSeconds,
+                        "failureThreshold": environmentConfigs.probes.liveness.failureThreshold
+                      },
+                      environmentConfigs.probes.liveness.type == "http"
+                        ? {"httpGet": {"path": environmentConfigs.probes.liveness.path, "port": workload.endpoints.transformList(name, ep, [ep.port]).flatten()[0]}}
+                        : {"tcpSocket": {"port": workload.endpoints.transformList(name, ep, [ep.port]).flatten()[0]}}
+                    ) : oc_omit()}
                   env: ${dependencies.toContainerEnvs()}
                   envFrom: ${configurations.toContainerEnvFrom()}
                   volumeMounts: |

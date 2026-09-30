@@ -1428,13 +1428,14 @@ func (c *openChoreoClient) fetchRuntimeReplicaState(ctx context.Context, namespa
 	return state
 }
 
-// agentStartupBudget bounds how long an agent may report "still starting" before the
-// deployment is called failed instead.
+// agentStartupBudget is the least time an agent may report "still starting" before the
+// deployment is called failed instead. agentStartupBudgetFor extends it for an agent whose
+// startup probe waits longer than the default.
 //
-// The number comes from the probes the agent-api component type renders (see
-// component-types/agent-api.yaml): a startup probe of initialDelaySeconds 10 +
-// periodSeconds 5 x failureThreshold 60 = 310s, after which kubelet kills the container
-// and the warm pool replaces the pod. The extra slack covers what happens before the
+// The number comes from the default startup probe the agent-api component type renders (see
+// component-types/agent-api.yaml): initialDelaySeconds 10 + periodSeconds 5 x
+// failureThreshold 60 = 310s, after which kubelet kills the container and the warm pool
+// replaces the pod. The extra slack (agentStartupSlack) covers what happens before the
 // container starts at all — pulling the agent image and running the instrumentation init
 // container — which is charged to the same clock, because the only timestamp available
 // is the binding's (getLastDeployedTime), not the container's.
@@ -1444,6 +1445,23 @@ func (c *openChoreoClient) fetchRuntimeReplicaState(ctx context.Context, namespa
 // importing, never bound its port, and cycled pods every ~5 minutes while the console
 // showed "in progress" indefinitely.
 const agentStartupBudget = 10 * time.Minute
+
+// agentStartupSlack is the time allowed on top of the startup probe's own window for the
+// image pull and init containers: agentStartupBudget less the default 310s window.
+const agentStartupSlack = agentStartupBudget - 310*time.Second
+
+// agentStartupBudgetFor returns how long the agent behind a binding may boot before its
+// deployment is reported failed: its startup probe window plus agentStartupSlack, and never
+// less than agentStartupBudget. A shorter or disabled startup probe keeps the default budget,
+// since reporting a healthy-but-slow rollout as failed is the worse error. An override that
+// cannot be read also falls back to the default, so a malformed binding still gets a status.
+func agentStartupBudgetFor(binding *gen.ReleaseBinding) time.Duration {
+	probes, err := resolveProbeConfigs(binding)
+	if err != nil {
+		return agentStartupBudget
+	}
+	return max(agentStartupBudget, startupProbeWindow(probes.Startup)+agentStartupSlack)
+}
 
 // bootDeadlineExceeded reports whether a booting agent has been booting for longer than
 // any pod could plausibly take to start.
@@ -1460,7 +1478,7 @@ func bootDeadlineExceeded(binding *gen.ReleaseBinding) bool {
 	if started.IsZero() {
 		return false
 	}
-	return time.Since(started) > agentStartupBudget
+	return time.Since(started) > agentStartupBudgetFor(binding)
 }
 
 // probedPorts lists the ports the platform's TCP startup probe targets, taken from the
@@ -1537,7 +1555,7 @@ func determineDeploymentStatus(binding *gen.ReleaseBinding, runtime runtimeRepli
 							"binding", binding.Metadata.Name,
 							"environment", bindingEnvironment(binding),
 							"elapsed", time.Since(deployAttemptTime(binding)).Round(time.Second),
-							"budget", agentStartupBudget,
+							"budget", agentStartupBudgetFor(binding),
 							"probedPorts", probedPorts(binding),
 							"desiredReplicas", runtime.desired,
 							"readyReplicas", runtime.ready)

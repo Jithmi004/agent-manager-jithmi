@@ -893,6 +893,123 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /orgs/{orgName}/projects/{projName}/agents/{agentName}/probe-configs:
+    get:
+      summary: Get agent health probe configurations
+      description: >-
+        Returns the startup, readiness and liveness probes in effect for the agent
+        in an environment: the environment's overrides applied over the platform
+        defaults.
+      operationId: getAgentProbeConfigs
+      parameters:
+        - name: agentName
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: orgName
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: projName
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: environment
+          in: query
+          description: Environment name.
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Agent probe configurations retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentProbeConfigsResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Agent or environment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      summary: Update agent health probe configurations
+      description: >-
+        Overrides the agent's health probes in one environment. Only the fields
+        provided are changed; the rest keep their current values. The agent must
+        have been deployed to the environment. Agents deployed before probes became
+        configurable must be redeployed once for overrides to take effect.
+      operationId: updateAgentProbeConfigs
+      parameters:
+        - name: agentName
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: orgName
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: projName
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: environment
+          in: query
+          description: Environment name.
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAgentProbeConfigsRequest"
+      responses:
+        "200":
+          description: Agent probe configurations updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentProbeConfigsResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Agent or environment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /orgs/{orgName}/utils/generate-name:
     post:
       summary: Get name by display name
@@ -11922,6 +12039,86 @@ components:
         autoScaling:
           $ref: "#/components/schemas/AutoScalingConfig"
           description: Current autoscaling configuration
+
+    AgentProbeConfig:
+      type: object
+      description: >-
+        A Kubernetes health probe for the agent container. The check runs against
+        the agent's first endpoint port.
+      properties:
+        enabled:
+          type: boolean
+          description: Whether the probe is set on the container.
+        type:
+          type: string
+          enum:
+            - tcp
+            - http
+          description: >-
+            tcp passes when the port accepts a connection; http passes when a GET
+            to path returns a 2xx or 3xx status.
+        path:
+          type: string
+          pattern: "^/"
+          maxLength: 1024
+          description: Path requested when type is http (e.g. "/health").
+        initialDelaySeconds:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 3600
+          description: Seconds after the container starts before the first check.
+        periodSeconds:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 3600
+          description: Seconds between checks.
+        timeoutSeconds:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 3600
+          description: Seconds a check may take before it counts as failed.
+        failureThreshold:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 1000
+          description: Consecutive failures before Kubernetes acts on the probe.
+
+    UpdateAgentProbeConfigsRequest:
+      type: object
+      description: Probes to change. Omitted probes and fields are left as they are.
+      properties:
+        startup:
+          $ref: "#/components/schemas/AgentProbeConfig"
+        readiness:
+          $ref: "#/components/schemas/AgentProbeConfig"
+        liveness:
+          $ref: "#/components/schemas/AgentProbeConfig"
+
+    AgentProbeConfigsResponse:
+      type: object
+      description: The probes in effect, with every field resolved.
+      required:
+        - startup
+        - readiness
+        - liveness
+        - redeployRequired
+      properties:
+        startup:
+          $ref: "#/components/schemas/AgentProbeConfig"
+        readiness:
+          $ref: "#/components/schemas/AgentProbeConfig"
+        liveness:
+          $ref: "#/components/schemas/AgentProbeConfig"
+        redeployRequired:
+          type: boolean
+          description: >-
+            True when the agent's current deployment in this environment predates
+            configurable probes. Probe settings are saved but take effect only
+            after the agent is deployed again.
 
     UpdateProjectRequest:
       type: object

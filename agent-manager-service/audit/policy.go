@@ -297,6 +297,7 @@ var actionOverrides = map[string]Action{
 	"PUT /orgs/{orgName}/projects/{projName}/agents/{agentName}/configurations":   "agent:update-configurations",
 	"PUT /orgs/{orgName}/projects/{projName}/agents/{agentName}/deploy-settings":  "agent:update-deploy-settings",
 	"PUT /orgs/{orgName}/projects/{projName}/agents/{agentName}/resource-configs": "agent:update-resource-configs",
+	"PUT /orgs/{orgName}/projects/{projName}/agents/{agentName}/probe-configs":    "agent:update-probe-configs",
 
 	// Agent-kind versions, gated by the coarse kind update/delete permissions.
 	"POST /orgs/{orgName}/agent-kinds/{kindName}/versions":                "agent-kind:add-version",

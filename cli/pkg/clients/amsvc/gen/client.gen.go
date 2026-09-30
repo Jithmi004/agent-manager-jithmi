@@ -806,6 +806,14 @@ type ClientInterface interface {
 	// StopMonitor request
 	StopMonitor(ctx context.Context, orgName string, projName string, agentName string, monitorName string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetAgentProbeConfigs request
+	GetAgentProbeConfigs(ctx context.Context, orgName string, projName string, agentName string, params *GetAgentProbeConfigsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateAgentProbeConfigsWithBody request with any body
+	UpdateAgentProbeConfigsWithBody(ctx context.Context, orgName string, projName string, agentName string, params *UpdateAgentProbeConfigsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	UpdateAgentProbeConfigs(ctx context.Context, orgName string, projName string, agentName string, params *UpdateAgentProbeConfigsParams, body UpdateAgentProbeConfigsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// PromoteAgentWithBody request with any body
 	PromoteAgentWithBody(ctx context.Context, orgName string, projName string, agentName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -4027,6 +4035,42 @@ func (c *Client) StartMonitor(ctx context.Context, orgName string, projName stri
 
 func (c *Client) StopMonitor(ctx context.Context, orgName string, projName string, agentName string, monitorName string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewStopMonitorRequest(c.Server, orgName, projName, agentName, monitorName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetAgentProbeConfigs(ctx context.Context, orgName string, projName string, agentName string, params *GetAgentProbeConfigsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAgentProbeConfigsRequest(c.Server, orgName, projName, agentName, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateAgentProbeConfigsWithBody(ctx context.Context, orgName string, projName string, agentName string, params *UpdateAgentProbeConfigsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateAgentProbeConfigsRequestWithBody(c.Server, orgName, projName, agentName, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateAgentProbeConfigs(ctx context.Context, orgName string, projName string, agentName string, params *UpdateAgentProbeConfigsParams, body UpdateAgentProbeConfigsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateAgentProbeConfigsRequest(c.Server, orgName, projName, agentName, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -15371,6 +15415,151 @@ func NewStopMonitorRequest(server string, orgName string, projName string, agent
 	return req, nil
 }
 
+// NewGetAgentProbeConfigsRequest generates requests for GetAgentProbeConfigs
+func NewGetAgentProbeConfigsRequest(server string, orgName string, projName string, agentName string, params *GetAgentProbeConfigsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "orgName", orgName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "projName", projName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "agentName", agentName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/orgs/%s/projects/%s/agents/%s/probe-configs", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "environment", params.Environment, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateAgentProbeConfigsRequest calls the generic UpdateAgentProbeConfigs builder with application/json body
+func NewUpdateAgentProbeConfigsRequest(server string, orgName string, projName string, agentName string, params *UpdateAgentProbeConfigsParams, body UpdateAgentProbeConfigsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateAgentProbeConfigsRequestWithBody(server, orgName, projName, agentName, params, "application/json", bodyReader)
+}
+
+// NewUpdateAgentProbeConfigsRequestWithBody generates requests for UpdateAgentProbeConfigs with any type of body
+func NewUpdateAgentProbeConfigsRequestWithBody(server string, orgName string, projName string, agentName string, params *UpdateAgentProbeConfigsParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "orgName", orgName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "projName", projName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "agentName", agentName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/orgs/%s/projects/%s/agents/%s/probe-configs", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "environment", params.Environment, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewPromoteAgentRequest calls the generic PromoteAgent builder with application/json body
 func NewPromoteAgentRequest(server string, orgName string, projName string, agentName string, body PromoteAgentJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -17667,6 +17856,14 @@ type ClientWithResponsesInterface interface {
 
 	// StopMonitorWithResponse request
 	StopMonitorWithResponse(ctx context.Context, orgName string, projName string, agentName string, monitorName string, reqEditors ...RequestEditorFn) (*StopMonitorResp, error)
+
+	// GetAgentProbeConfigsWithResponse request
+	GetAgentProbeConfigsWithResponse(ctx context.Context, orgName string, projName string, agentName string, params *GetAgentProbeConfigsParams, reqEditors ...RequestEditorFn) (*GetAgentProbeConfigsResp, error)
+
+	// UpdateAgentProbeConfigsWithBodyWithResponse request with any body
+	UpdateAgentProbeConfigsWithBodyWithResponse(ctx context.Context, orgName string, projName string, agentName string, params *UpdateAgentProbeConfigsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAgentProbeConfigsResp, error)
+
+	UpdateAgentProbeConfigsWithResponse(ctx context.Context, orgName string, projName string, agentName string, params *UpdateAgentProbeConfigsParams, body UpdateAgentProbeConfigsJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAgentProbeConfigsResp, error)
 
 	// PromoteAgentWithBodyWithResponse request with any body
 	PromoteAgentWithBodyWithResponse(ctx context.Context, orgName string, projName string, agentName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PromoteAgentResp, error)
@@ -22594,6 +22791,56 @@ func (r StopMonitorResp) StatusCode() int {
 	return 0
 }
 
+type GetAgentProbeConfigsResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *AgentProbeConfigsResponse
+	JSON400      *ErrorResponse
+	JSON404      *ErrorResponse
+	JSON500      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAgentProbeConfigsResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAgentProbeConfigsResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type UpdateAgentProbeConfigsResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *AgentProbeConfigsResponse
+	JSON400      *ErrorResponse
+	JSON404      *ErrorResponse
+	JSON500      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateAgentProbeConfigsResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateAgentProbeConfigsResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type PromoteAgentResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -25486,6 +25733,32 @@ func (c *ClientWithResponses) StopMonitorWithResponse(ctx context.Context, orgNa
 		return nil, err
 	}
 	return ParseStopMonitorResp(rsp)
+}
+
+// GetAgentProbeConfigsWithResponse request returning *GetAgentProbeConfigsResp
+func (c *ClientWithResponses) GetAgentProbeConfigsWithResponse(ctx context.Context, orgName string, projName string, agentName string, params *GetAgentProbeConfigsParams, reqEditors ...RequestEditorFn) (*GetAgentProbeConfigsResp, error) {
+	rsp, err := c.GetAgentProbeConfigs(ctx, orgName, projName, agentName, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAgentProbeConfigsResp(rsp)
+}
+
+// UpdateAgentProbeConfigsWithBodyWithResponse request with arbitrary body returning *UpdateAgentProbeConfigsResp
+func (c *ClientWithResponses) UpdateAgentProbeConfigsWithBodyWithResponse(ctx context.Context, orgName string, projName string, agentName string, params *UpdateAgentProbeConfigsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAgentProbeConfigsResp, error) {
+	rsp, err := c.UpdateAgentProbeConfigsWithBody(ctx, orgName, projName, agentName, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateAgentProbeConfigsResp(rsp)
+}
+
+func (c *ClientWithResponses) UpdateAgentProbeConfigsWithResponse(ctx context.Context, orgName string, projName string, agentName string, params *UpdateAgentProbeConfigsParams, body UpdateAgentProbeConfigsJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAgentProbeConfigsResp, error) {
+	rsp, err := c.UpdateAgentProbeConfigs(ctx, orgName, projName, agentName, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateAgentProbeConfigsResp(rsp)
 }
 
 // PromoteAgentWithBodyWithResponse request with arbitrary body returning *PromoteAgentResp
@@ -34713,6 +34986,100 @@ func ParseStopMonitorResp(rsp *http.Response) (*StopMonitorResp, error) {
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetAgentProbeConfigsResp parses an HTTP response from a GetAgentProbeConfigsWithResponse call
+func ParseGetAgentProbeConfigsResp(rsp *http.Response) (*GetAgentProbeConfigsResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAgentProbeConfigsResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AgentProbeConfigsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateAgentProbeConfigsResp parses an HTTP response from a UpdateAgentProbeConfigsWithResponse call
+func ParseUpdateAgentProbeConfigsResp(rsp *http.Response) (*UpdateAgentProbeConfigsResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateAgentProbeConfigsResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AgentProbeConfigsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest ErrorResponse

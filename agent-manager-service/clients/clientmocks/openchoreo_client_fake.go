@@ -114,6 +114,9 @@ import (
 //			GetDeploymentsFunc: func(ctx context.Context, ouID string, pipelineName string, projectName string, componentName string) ([]*models.DeploymentResponse, error) {
 //				panic("mock out the GetDeployments method")
 //			},
+//			GetEnvProbeConfigsFunc: func(ctx context.Context, ouID string, projectName string, componentName string, environment string) (*client.EnvProbeConfigsResponse, error) {
+//				panic("mock out the GetEnvProbeConfigs method")
+//			},
 //			GetEnvResourceConfigsFunc: func(ctx context.Context, ouID string, projectName string, componentName string, environment string) (*client.ComponentResourceConfigsResponse, error) {
 //				panic("mock out the GetEnvResourceConfigs method")
 //			},
@@ -233,6 +236,9 @@ import (
 //			},
 //			UpdateDeploymentStateFunc: func(ctx context.Context, ouID string, projectName string, componentName string, environment string, state ocapi.ReleaseBindingSpecState) error {
 //				panic("mock out the UpdateDeploymentState method")
+//			},
+//			UpdateEnvProbeConfigsFunc: func(ctx context.Context, ouID string, projectName string, componentName string, environment string, req client.ComponentProbeConfigs) error {
+//				panic("mock out the UpdateEnvProbeConfigs method")
 //			},
 //			UpdateEnvResourceConfigsFunc: func(ctx context.Context, ouID string, projectName string, componentName string, environment string, req client.UpdateComponentResourceConfigsRequest) error {
 //				panic("mock out the UpdateEnvResourceConfigs method")
@@ -355,6 +361,9 @@ type OpenChoreoClientMock struct {
 	// GetDeploymentsFunc mocks the GetDeployments method.
 	GetDeploymentsFunc func(ctx context.Context, ouID string, pipelineName string, projectName string, componentName string) ([]*models.DeploymentResponse, error)
 
+	// GetEnvProbeConfigsFunc mocks the GetEnvProbeConfigs method.
+	GetEnvProbeConfigsFunc func(ctx context.Context, ouID string, projectName string, componentName string, environment string) (*client.EnvProbeConfigsResponse, error)
+
 	// GetEnvResourceConfigsFunc mocks the GetEnvResourceConfigs method.
 	GetEnvResourceConfigsFunc func(ctx context.Context, ouID string, projectName string, componentName string, environment string) (*client.ComponentResourceConfigsResponse, error)
 
@@ -474,6 +483,9 @@ type OpenChoreoClientMock struct {
 
 	// UpdateDeploymentStateFunc mocks the UpdateDeploymentState method.
 	UpdateDeploymentStateFunc func(ctx context.Context, ouID string, projectName string, componentName string, environment string, state ocapi.ReleaseBindingSpecState) error
+
+	// UpdateEnvProbeConfigsFunc mocks the UpdateEnvProbeConfigs method.
+	UpdateEnvProbeConfigsFunc func(ctx context.Context, ouID string, projectName string, componentName string, environment string, req client.ComponentProbeConfigs) error
 
 	// UpdateEnvResourceConfigsFunc mocks the UpdateEnvResourceConfigs method.
 	UpdateEnvResourceConfigsFunc func(ctx context.Context, ouID string, projectName string, componentName string, environment string, req client.UpdateComponentResourceConfigsRequest) error
@@ -850,6 +862,19 @@ type OpenChoreoClientMock struct {
 			ProjectName string
 			// ComponentName is the componentName argument value.
 			ComponentName string
+		}
+		// GetEnvProbeConfigs holds details about calls to the GetEnvProbeConfigs method.
+		GetEnvProbeConfigs []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// OuID is the ouID argument value.
+			OuID string
+			// ProjectName is the projectName argument value.
+			ProjectName string
+			// ComponentName is the componentName argument value.
+			ComponentName string
+			// Environment is the environment argument value.
+			Environment string
 		}
 		// GetEnvResourceConfigs holds details about calls to the GetEnvResourceConfigs method.
 		GetEnvResourceConfigs []struct {
@@ -1291,6 +1316,21 @@ type OpenChoreoClientMock struct {
 			// State is the state argument value.
 			State ocapi.ReleaseBindingSpecState
 		}
+		// UpdateEnvProbeConfigs holds details about calls to the UpdateEnvProbeConfigs method.
+		UpdateEnvProbeConfigs []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// OuID is the ouID argument value.
+			OuID string
+			// ProjectName is the projectName argument value.
+			ProjectName string
+			// ComponentName is the componentName argument value.
+			ComponentName string
+			// Environment is the environment argument value.
+			Environment string
+			// Req is the req argument value.
+			Req client.ComponentProbeConfigs
+		}
 		// UpdateEnvResourceConfigs holds details about calls to the UpdateEnvResourceConfigs method.
 		UpdateEnvResourceConfigs []struct {
 			// Ctx is the ctx argument value.
@@ -1402,6 +1442,7 @@ type OpenChoreoClientMock struct {
 	lockGetComponentEndpoints                  sync.RWMutex
 	lockGetComponentFileMounts                 sync.RWMutex
 	lockGetDeployments                         sync.RWMutex
+	lockGetEnvProbeConfigs                     sync.RWMutex
 	lockGetEnvResourceConfigs                  sync.RWMutex
 	lockGetEnvironment                         sync.RWMutex
 	lockGetOrganization                        sync.RWMutex
@@ -1442,6 +1483,7 @@ type OpenChoreoClientMock struct {
 	lockUpdateComponentEnvVars                 sync.RWMutex
 	lockUpdateDeploymentPipeline               sync.RWMutex
 	lockUpdateDeploymentState                  sync.RWMutex
+	lockUpdateEnvProbeConfigs                  sync.RWMutex
 	lockUpdateEnvResourceConfigs               sync.RWMutex
 	lockUpdateEnvironment                      sync.RWMutex
 	lockUpdateReleaseBindingEnvVars            sync.RWMutex
@@ -2863,6 +2905,54 @@ func (mock *OpenChoreoClientMock) GetDeploymentsCalls() []struct {
 	mock.lockGetDeployments.RLock()
 	calls = mock.calls.GetDeployments
 	mock.lockGetDeployments.RUnlock()
+	return calls
+}
+
+// GetEnvProbeConfigs calls GetEnvProbeConfigsFunc.
+func (mock *OpenChoreoClientMock) GetEnvProbeConfigs(ctx context.Context, ouID string, projectName string, componentName string, environment string) (*client.EnvProbeConfigsResponse, error) {
+	if mock.GetEnvProbeConfigsFunc == nil {
+		panic("OpenChoreoClientMock.GetEnvProbeConfigsFunc: method is nil but OpenChoreoClient.GetEnvProbeConfigs was just called")
+	}
+	callInfo := struct {
+		Ctx           context.Context
+		OuID          string
+		ProjectName   string
+		ComponentName string
+		Environment   string
+	}{
+		Ctx:           ctx,
+		OuID:          ouID,
+		ProjectName:   projectName,
+		ComponentName: componentName,
+		Environment:   environment,
+	}
+	mock.lockGetEnvProbeConfigs.Lock()
+	mock.calls.GetEnvProbeConfigs = append(mock.calls.GetEnvProbeConfigs, callInfo)
+	mock.lockGetEnvProbeConfigs.Unlock()
+	return mock.GetEnvProbeConfigsFunc(ctx, ouID, projectName, componentName, environment)
+}
+
+// GetEnvProbeConfigsCalls gets all the calls that were made to GetEnvProbeConfigs.
+// Check the length with:
+//
+//	len(mockedOpenChoreoClient.GetEnvProbeConfigsCalls())
+func (mock *OpenChoreoClientMock) GetEnvProbeConfigsCalls() []struct {
+	Ctx           context.Context
+	OuID          string
+	ProjectName   string
+	ComponentName string
+	Environment   string
+} {
+	var calls []struct {
+		Ctx           context.Context
+		OuID          string
+		ProjectName   string
+		ComponentName string
+		Environment   string
+	}
+	mock.lockGetEnvProbeConfigs.RLock()
+	calls = mock.calls.GetEnvProbeConfigs
+	mock.lockGetEnvProbeConfigs.RUnlock()
 	return calls
 }
 
@@ -4623,6 +4713,58 @@ func (mock *OpenChoreoClientMock) UpdateDeploymentStateCalls() []struct {
 	mock.lockUpdateDeploymentState.RLock()
 	calls = mock.calls.UpdateDeploymentState
 	mock.lockUpdateDeploymentState.RUnlock()
+	return calls
+}
+
+// UpdateEnvProbeConfigs calls UpdateEnvProbeConfigsFunc.
+func (mock *OpenChoreoClientMock) UpdateEnvProbeConfigs(ctx context.Context, ouID string, projectName string, componentName string, environment string, req client.ComponentProbeConfigs) error {
+	if mock.UpdateEnvProbeConfigsFunc == nil {
+		panic("OpenChoreoClientMock.UpdateEnvProbeConfigsFunc: method is nil but OpenChoreoClient.UpdateEnvProbeConfigs was just called")
+	}
+	callInfo := struct {
+		Ctx           context.Context
+		OuID          string
+		ProjectName   string
+		ComponentName string
+		Environment   string
+		Req           client.ComponentProbeConfigs
+	}{
+		Ctx:           ctx,
+		OuID:          ouID,
+		ProjectName:   projectName,
+		ComponentName: componentName,
+		Environment:   environment,
+		Req:           req,
+	}
+	mock.lockUpdateEnvProbeConfigs.Lock()
+	mock.calls.UpdateEnvProbeConfigs = append(mock.calls.UpdateEnvProbeConfigs, callInfo)
+	mock.lockUpdateEnvProbeConfigs.Unlock()
+	return mock.UpdateEnvProbeConfigsFunc(ctx, ouID, projectName, componentName, environment, req)
+}
+
+// UpdateEnvProbeConfigsCalls gets all the calls that were made to UpdateEnvProbeConfigs.
+// Check the length with:
+//
+//	len(mockedOpenChoreoClient.UpdateEnvProbeConfigsCalls())
+func (mock *OpenChoreoClientMock) UpdateEnvProbeConfigsCalls() []struct {
+	Ctx           context.Context
+	OuID          string
+	ProjectName   string
+	ComponentName string
+	Environment   string
+	Req           client.ComponentProbeConfigs
+} {
+	var calls []struct {
+		Ctx           context.Context
+		OuID          string
+		ProjectName   string
+		ComponentName string
+		Environment   string
+		Req           client.ComponentProbeConfigs
+	}
+	mock.lockUpdateEnvProbeConfigs.RLock()
+	calls = mock.calls.UpdateEnvProbeConfigs
+	mock.lockUpdateEnvProbeConfigs.RUnlock()
 	return calls
 }
 

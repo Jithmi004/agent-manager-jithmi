@@ -81,6 +81,10 @@ type OpenChoreoClient interface {
 	UpdateComponentBasicInfo(ctx context.Context, ouID, projectName, componentName string, req UpdateComponentBasicInfoRequest) error
 	GetEnvResourceConfigs(ctx context.Context, ouID, projectName, componentName, environment string) (*ComponentResourceConfigsResponse, error)
 	UpdateEnvResourceConfigs(ctx context.Context, ouID, projectName, componentName, environment string, req UpdateComponentResourceConfigsRequest) error
+	// GetEnvProbeConfigs returns the health probes in effect for a component in an environment.
+	GetEnvProbeConfigs(ctx context.Context, ouID, projectName, componentName, environment string) (*EnvProbeConfigsResponse, error)
+	// UpdateEnvProbeConfigs merges probe overrides into the component's release binding for an environment.
+	UpdateEnvProbeConfigs(ctx context.Context, ouID, projectName, componentName, environment string, req ComponentProbeConfigs) error
 	DeleteComponent(ctx context.Context, ouID, projectName, componentName string) error
 	// ListComponents returns only the agent components in the project. Projects are shared
 	// across WSO2 Cloud products, so a project can also hold components another product

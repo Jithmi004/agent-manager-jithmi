@@ -84,6 +84,24 @@ func (e AgentKindVersionResponseAgentSubType) Valid() bool {
 	}
 }
 
+// Defines values for AgentProbeConfigType.
+const (
+	Http AgentProbeConfigType = "http"
+	Tcp  AgentProbeConfigType = "tcp"
+)
+
+// Valid indicates whether the value is a known member of the AgentProbeConfigType enum.
+func (e AgentProbeConfigType) Valid() bool {
+	switch e {
+	case Http:
+		return true
+	case Tcp:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AgentThunderStatus.
 const (
 	AgentThunderStatusCompleted  AgentThunderStatus = "completed"
@@ -1571,6 +1589,48 @@ type AgentModelConfigResponse struct {
 
 	// Uuid Unique identifier for the configuration
 	Uuid openapi_types.UUID `json:"uuid"`
+}
+
+// AgentProbeConfig A Kubernetes health probe for the agent container. The check runs against the agent's first endpoint port.
+type AgentProbeConfig struct {
+	// Enabled Whether the probe is set on the container.
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// FailureThreshold Consecutive failures before Kubernetes acts on the probe.
+	FailureThreshold *int32 `json:"failureThreshold,omitempty"`
+
+	// InitialDelaySeconds Seconds after the container starts before the first check.
+	InitialDelaySeconds *int32 `json:"initialDelaySeconds,omitempty"`
+
+	// Path Path requested when type is http (e.g. "/health").
+	Path *string `json:"path,omitempty"`
+
+	// PeriodSeconds Seconds between checks.
+	PeriodSeconds *int32 `json:"periodSeconds,omitempty"`
+
+	// TimeoutSeconds Seconds a check may take before it counts as failed.
+	TimeoutSeconds *int32 `json:"timeoutSeconds,omitempty"`
+
+	// Type tcp passes when the port accepts a connection; http passes when a GET to path returns a 2xx or 3xx status.
+	Type *AgentProbeConfigType `json:"type,omitempty"`
+}
+
+// AgentProbeConfigType tcp passes when the port accepts a connection; http passes when a GET to path returns a 2xx or 3xx status.
+type AgentProbeConfigType string
+
+// AgentProbeConfigsResponse The probes in effect, with every field resolved.
+type AgentProbeConfigsResponse struct {
+	// Liveness A Kubernetes health probe for the agent container. The check runs against the agent's first endpoint port.
+	Liveness AgentProbeConfig `json:"liveness"`
+
+	// Readiness A Kubernetes health probe for the agent container. The check runs against the agent's first endpoint port.
+	Readiness AgentProbeConfig `json:"readiness"`
+
+	// RedeployRequired True when the agent's current deployment in this environment predates configurable probes. Probe settings are saved but take effect only after the agent is deployed again.
+	RedeployRequired bool `json:"redeployRequired"`
+
+	// Startup A Kubernetes health probe for the agent container. The check runs against the agent's first endpoint port.
+	Startup AgentProbeConfig `json:"startup"`
 }
 
 // AgentProvisioningType Whether the agent runs on the platform (`internal`) or outside it (`external`)
@@ -5214,6 +5274,18 @@ type UpdateAgentModelConfigRequest struct {
 	Name *string `json:"name,omitempty"`
 }
 
+// UpdateAgentProbeConfigsRequest Probes to change. Omitted probes and fields are left as they are.
+type UpdateAgentProbeConfigsRequest struct {
+	// Liveness A Kubernetes health probe for the agent container. The check runs against the agent's first endpoint port.
+	Liveness *AgentProbeConfig `json:"liveness,omitempty"`
+
+	// Readiness A Kubernetes health probe for the agent container. The check runs against the agent's first endpoint port.
+	Readiness *AgentProbeConfig `json:"readiness,omitempty"`
+
+	// Startup A Kubernetes health probe for the agent container. The check runs against the agent's first endpoint port.
+	Startup *AgentProbeConfig `json:"startup,omitempty"`
+}
+
 // UpdateAgentResourceConfigsRequest defines model for UpdateAgentResourceConfigsRequest.
 type UpdateAgentResourceConfigsRequest struct {
 	AutoScaling AutoScalingConfig `json:"autoScaling"`
@@ -5911,6 +5983,18 @@ type GetMonitorScoresTimeSeriesParams struct {
 	Evaluators string `form:"evaluators" json:"evaluators"`
 }
 
+// GetAgentProbeConfigsParams defines parameters for GetAgentProbeConfigs.
+type GetAgentProbeConfigsParams struct {
+	// Environment Environment name.
+	Environment string `form:"environment" json:"environment"`
+}
+
+// UpdateAgentProbeConfigsParams defines parameters for UpdateAgentProbeConfigs.
+type UpdateAgentProbeConfigsParams struct {
+	// Environment Environment name.
+	Environment string `form:"environment" json:"environment"`
+}
+
 // GetAgentResourceConfigsParams defines parameters for GetAgentResourceConfigs.
 type GetAgentResourceConfigsParams struct {
 	// Environment Optional environment name. If omitted, returns component-level defaults. If provided, returns environment-specific resource configurations.
@@ -6189,6 +6273,9 @@ type CreateMonitorJSONRequestBody = CreateMonitorRequest
 
 // UpdateMonitorJSONRequestBody defines body for UpdateMonitor for application/json ContentType.
 type UpdateMonitorJSONRequestBody = UpdateMonitorRequest
+
+// UpdateAgentProbeConfigsJSONRequestBody defines body for UpdateAgentProbeConfigs for application/json ContentType.
+type UpdateAgentProbeConfigsJSONRequestBody = UpdateAgentProbeConfigsRequest
 
 // PromoteAgentJSONRequestBody defines body for PromoteAgent for application/json ContentType.
 type PromoteAgentJSONRequestBody = PromoteAgentRequest
