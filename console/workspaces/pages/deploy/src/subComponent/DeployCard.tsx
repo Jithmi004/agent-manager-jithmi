@@ -20,6 +20,7 @@ import {
   useGetAgent,
   useGetAgentConfigurations,
   useGetAgentMetrics,
+  useGetAgentProbeConfigs,
   useGetAgentResourceConfigs,
   useGetDeploymentPipeline,
   useListAgentDeployments,
@@ -27,6 +28,7 @@ import {
 } from "@agent-management-platform/api-client";
 import { NoDataFound, TextInput } from "@agent-management-platform/views";
 import {
+  Activity,
   ArrowRightFromLine,
   Clock,
   Cpu,
@@ -81,6 +83,9 @@ import {
 import { EditDeployConfigDrawer } from "./EditDeployConfigDrawer";
 import {
   absoluteRouteMap,
+  AgentProbeConfig,
+  AgentProbeConfigsResponse,
+  AgentProbeName,
   AgentResourceConfigsResponse,
   MetricsResponse,
   Environment,
@@ -95,6 +100,7 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import { useCallback, useMemo, useState } from "react";
 import { EditResourceConfigsDrawer } from "./EditResourceConfigsDrawer";
+import { EditProbeConfigsDrawer } from "./EditProbeConfigsDrawer";
 import { PromoteAgentDrawer } from "./PromoteAgentDrawer";
 
 // Statuses where a deployment exists in the environment and can therefore be
@@ -153,6 +159,56 @@ function DeploymentStatusPanel({ status }: { status: DeploymentStatus }) {
       <Typography variant="body2">Deployment Status:</Typography>
       <EnvStatus status={status} />
     </Box>
+  );
+}
+
+const PROBE_LABELS: Record<AgentProbeName, string> = {
+  startup: "Startup",
+  readiness: "Readiness",
+  liveness: "Liveness",
+};
+
+function describeProbe(probe: AgentProbeConfig | undefined): string {
+  if (!probe?.enabled) return "Off";
+  return probe.type === "http" ? `HTTP ${probe.path ?? ""}` : "TCP";
+}
+
+function ProbeConfigsPanel({
+  probeConfigs,
+  isLoading,
+}: {
+  probeConfigs?: AgentProbeConfigsResponse;
+  isLoading: boolean;
+}) {
+  if (isLoading) {
+    return <Skeleton variant="rounded" width={"100%"} height={32} />;
+  }
+  if (!probeConfigs) {
+    return (
+      <NoDataFound
+        message="No health checks found"
+        icon={<Info size={16} />}
+        disableBackground
+      />
+    );
+  }
+  return (
+    <Stack direction="row" gap={1} flexWrap="wrap">
+      {(Object.keys(PROBE_LABELS) as AgentProbeName[]).map((name) => (
+        <Chip
+          key={name}
+          size="small"
+          variant="outlined"
+          color={probeConfigs[name]?.enabled ? "success" : "default"}
+          label={`${PROBE_LABELS[name]}: ${describeProbe(probeConfigs[name])}`}
+        />
+      ))}
+      {probeConfigs.redeployRequired && (
+        <Tooltip title="Saved health checks take effect the next time this agent is deployed">
+          <Chip size="small" variant="outlined" color="warning" label="Redeploy to apply" />
+        </Tooltip>
+      )}
+    </Stack>
   );
 }
 
@@ -263,6 +319,7 @@ interface DeployCardProps {
 
 const ENV_ID_PARAM = "envId";
 const OPEN_RES_CONFIG_PARAM = "openResConfig";
+const OPEN_PROBE_CONFIG_PARAM = "openProbeConfig";
 const OPEN_PROMOTE_PARAM = "openPromote";
 const OPEN_CONFIGURE_PARAM = "openConfigure";
 
@@ -274,6 +331,24 @@ export function DeployCard(props: DeployCardProps) {
   const resourceConfigDrawerOpen =
     searchParams.get(OPEN_RES_CONFIG_PARAM) === "open" &&
     searchParams.get(ENV_ID_PARAM) === currentEnvironment.name;
+
+  const probeConfigDrawerOpen =
+    searchParams.get(OPEN_PROBE_CONFIG_PARAM) === "open" &&
+    searchParams.get(ENV_ID_PARAM) === currentEnvironment.name;
+
+  const handleOpenProbeConfigDrawer = useCallback(() => {
+    const next = new URLSearchParams(searchParams);
+    next.set(ENV_ID_PARAM, currentEnvironment.name);
+    next.set(OPEN_PROBE_CONFIG_PARAM, "open");
+    setSearchParams(next);
+  }, [currentEnvironment.name, searchParams, setSearchParams]);
+
+  const handleCloseProbeConfigDrawer = useCallback(() => {
+    const next = new URLSearchParams(searchParams);
+    next.delete(OPEN_PROBE_CONFIG_PARAM);
+    next.delete(ENV_ID_PARAM);
+    setSearchParams(next);
+  }, [searchParams, setSearchParams]);
 
   const promoteDrawerOpen =
     searchParams.get(OPEN_PROMOTE_PARAM) === "open" &&
@@ -376,6 +451,18 @@ export function DeployCard(props: DeployCardProps) {
 
   const { data: resourceConfigs, isLoading: isResourceConfigsLoading } =
     useGetAgentResourceConfigs(
+      {
+        orgName: orgId,
+        projName: projectId,
+        agentName: agentId,
+      },
+      {
+        environment: currentEnvironment.name,
+      },
+    );
+
+  const { data: probeConfigs, isLoading: isProbeConfigsLoading } =
+    useGetAgentProbeConfigs(
       {
         orgName: orgId,
         projName: projectId,
@@ -665,6 +752,31 @@ export function DeployCard(props: DeployCardProps) {
                 </Stack>
               </Card>
 
+              <Card variant="outlined" sx={{ padding: 1.4, pt: 0.5 }}>
+                <Stack gap={1}>
+                  <Stack direction="row" gap={1} alignItems="center" justifyContent="space-between">
+                    <Stack direction="row" gap={1} alignItems="center">
+                      <Activity size={16} />
+                      <Typography variant="h6">Health Checks</Typography>
+                    </Stack>
+                    <Button
+                      variant="text"
+                      size="small"
+                      color="inherit"
+                      sx={{ padding: 0.5 }}
+                      startIcon={<SlidersVertical size={16} />}
+                      onClick={handleOpenProbeConfigDrawer}
+                    >
+                      Configure
+                    </Button>
+                  </Stack>
+                  <ProbeConfigsPanel
+                    probeConfigs={probeConfigs}
+                    isLoading={isProbeConfigsLoading}
+                  />
+                </Stack>
+              </Card>
+
               <Card variant="outlined" sx={{ padding: 1.4 }}>
                 <Stack gap={1.5}>
                   {/* One Configure opens the unified drawer (CORS, Authentication, Tracing,
@@ -753,6 +865,17 @@ export function DeployCard(props: DeployCardProps) {
               open={resourceConfigDrawerOpen}
               onClose={handleCloseResourceConfigDrawer}
               resourceConfigs={resourceConfigs}
+              orgName={orgId ?? "default"}
+              projName={projectId ?? "default"}
+              agentName={agentId}
+              environment={currentEnvironment.name}
+            />
+          )}
+          {agentId && (
+            <EditProbeConfigsDrawer
+              open={probeConfigDrawerOpen}
+              onClose={handleCloseProbeConfigDrawer}
+              probeConfigs={probeConfigs}
               orgName={orgId ?? "default"}
               projName={projectId ?? "default"}
               agentName={agentId}

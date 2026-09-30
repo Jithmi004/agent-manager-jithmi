@@ -33,6 +33,7 @@ export * from './runtime-config';
 export * from './runtime-logs';
 export * from './repositories';
 export * from './resource-configs';
+export * from './probe-configs';
 export * from './llm-providers';
 export * from './mcp-proxies';
 export * from './agent-mcp-proxies';
