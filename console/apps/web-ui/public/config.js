@@ -48,8 +48,8 @@ window.__RUNTIME_CONFIG__ = {
     // once the agent-manager-service audience allowlist (KEY_MANAGER_AUDIENCE)
     // accepts the value — the token's aud becomes the resource server identifier
     // instead of the client_id.
-    ...('urn:wso2:amp'.trim() && {
-      signInOptions: { resource: 'urn:wso2:amp'.trim() },
+    ...(''.trim() && {
+      signInOptions: { resource: ''.trim() },
     }),
     tokenValidation: {
       idToken: {
@@ -66,16 +66,16 @@ window.__RUNTIME_CONFIG__ = {
     storage: 'localStorage',
   },
   disableAuth: 'false' === 'true',
-  rbacEnabled: 'true' === 'true',
   apiBaseUrl: 'http://localhost:9000',
   configDiscoveryBaseUrl: '',
   gatewayControlPlaneUrl: 'http://localhost:9243',
-  gatewayVersion: 'v0.11.0',
+  gatewayVersion: 'v2026.09.24',
   ampVersion: 'v0.16.0',
+  scriptBaseUrl: '',
   instrumentationUrl: 'http://default-default.gateway.localhost:19080/otel',
   agentManagerInternalBaseUrl: 'http://host.docker.internal:9000',
   agentManagerInternalCpHost: 'host.docker.internal:9243',
-  thunderHostBaseDomain: 'amp.localhost',
+  idpHostBaseDomain: 'amp.localhost',
   tlsEnabled: 'false' === 'true',
   guardrailsCatalogUrl: 'https://db720294-98fd-40f4-85a1-cc6a3b65bc9a-prod.e1-us-east-azure.choreoapis.dev/api-platform/policy-hub-api/policy-hub-public/v1.0/policies?categories=Guardrails,AI&limit=100',
   guardrailsDefinitionBaseUrl: 'https://db720294-98fd-40f4-85a1-cc6a3b65bc9a-prod.e1-us-east-azure.choreoapis.dev/api-platform/policy-hub-api/policy-hub-public/v1.0/policies',
@@ -91,8 +91,9 @@ window.__RUNTIME_CONFIG__ = {
     enableIdentityProviderManagedMode: '' === 'true',
     enableProfileManagement: 'true' === 'true',
     enableUserManagement: 'true' === 'true',
-    enableAgentIdentity: true,
   },
+  maxRequestBodyBytes: '57344',
+  fileMountMaxFileBytes: '1000000',
   docsUrl: 'https://wso2.github.io/agent-manager/docs/latest',
   footerLinks: {
     privacyPolicyUrl: 'https://wso2.com/agent-platform/agent-manager/',

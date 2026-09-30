@@ -1,0 +1,8 @@
+fastapi==0.139.0
+uvicorn[standard]==0.47.0
+pydantic==2.13.4
+
+# wrapt locked to 1.x — AM's auto-instrumentation calls
+# wrap_function_wrapper(module=..., name=..., wrapper=...), which wrapt 2.x
+# dropped. See samples/it-helpdesk-agent/requirements.txt.
+wrapt==1.17.3
