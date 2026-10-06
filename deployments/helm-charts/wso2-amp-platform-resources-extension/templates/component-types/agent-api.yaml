@@ -72,14 +72,16 @@ spec:
             routes instead of the distinct paths the legacy expression gave
             each; today every code path produces exactly one endpoint, so this
             is unreachable in practice.
+        # Health checks, set at build time: they depend on the agent image, so they are
+        # the same in every environment. Each check's `port` defaults to the agent's
+        # endpoint port. The wait times here are the baseline; an environment may
+        # override them (environmentConfigs.probes). Defaults reproduce the fixed probes
+        # agents had before this was configurable and must match defaultHealthChecks in
+        # agent-manager-service, which a unit test enforces.
         probes:
           type: object
           default: {}
           properties:
-            port:
-              type: integer
-              minimum: 1
-              maximum: 65535
             startup:
               type: object
               default: {}
@@ -93,6 +95,10 @@ spec:
                     - tcp
                     - http
                   default: tcp
+                port:
+                  type: integer
+                  minimum: 1
+                  maximum: 65535
                 path:
                   type: string
                   pattern: '^/'
@@ -131,6 +137,10 @@ spec:
                     - tcp
                     - http
                   default: tcp
+                port:
+                  type: integer
+                  minimum: 1
+                  maximum: 65535
                 path:
                   type: string
                   pattern: '^/'
@@ -169,6 +179,10 @@ spec:
                     - tcp
                     - http
                   default: tcp
+                port:
+                  type: integer
+                  minimum: 1
+                  maximum: 65535
                 path:
                   type: string
                   pattern: '^/'
@@ -383,6 +397,10 @@ spec:
                     limits:
                       cpu: ${environmentConfigs.resources.limits.?cpu.orValue(parameters.resources.limits.cpu)}
                       memory: ${environmentConfigs.resources.limits.?memory.orValue(parameters.resources.limits.memory)}
+                  # Each probe: what to check (on/off, type, path, port) comes from the build-time
+                  # parameters.probes; each wait time from the environment's override, else the
+                  # build-time value. A check without a port uses the agent's endpoint port. A
+                  # disabled probe is omitted.
                   startupProbe: |
                     ${parameters.probes.startup.enabled ? oc_merge(
                       {
@@ -396,9 +414,9 @@ spec:
                           environmentConfigs.probes.startup.?failureThreshold.orValue(parameters.probes.startup.failureThreshold)
                       },
                       parameters.probes.startup.type == "http"
-                        ? {"httpGet": {"path": parameters.probes.startup.path, "port": parameters.probes.?port.orValue(
+                        ? {"httpGet": {"path": parameters.probes.startup.path, "port": parameters.probes.startup.?port.orValue(
                             workload.endpoints.transformList(name, ep, [ep.port]).flatten()[0])}}
-                        : {"tcpSocket": {"port": parameters.probes.?port.orValue(
+                        : {"tcpSocket": {"port": parameters.probes.startup.?port.orValue(
                             workload.endpoints.transformList(name, ep, [ep.port]).flatten()[0])}}
                     ) : oc_omit()}
                   readinessProbe: |
@@ -414,9 +432,9 @@ spec:
                           environmentConfigs.probes.readiness.?failureThreshold.orValue(parameters.probes.readiness.failureThreshold)
                       },
                       parameters.probes.readiness.type == "http"
-                        ? {"httpGet": {"path": parameters.probes.readiness.path, "port": parameters.probes.?port.orValue(
+                        ? {"httpGet": {"path": parameters.probes.readiness.path, "port": parameters.probes.readiness.?port.orValue(
                             workload.endpoints.transformList(name, ep, [ep.port]).flatten()[0])}}
-                        : {"tcpSocket": {"port": parameters.probes.?port.orValue(
+                        : {"tcpSocket": {"port": parameters.probes.readiness.?port.orValue(
                             workload.endpoints.transformList(name, ep, [ep.port]).flatten()[0])}}
                     ) : oc_omit()}
                   livenessProbe: |
@@ -432,9 +450,9 @@ spec:
                           environmentConfigs.probes.liveness.?failureThreshold.orValue(parameters.probes.liveness.failureThreshold)
                       },
                       parameters.probes.liveness.type == "http"
-                        ? {"httpGet": {"path": parameters.probes.liveness.path, "port": parameters.probes.?port.orValue(
+                        ? {"httpGet": {"path": parameters.probes.liveness.path, "port": parameters.probes.liveness.?port.orValue(
                             workload.endpoints.transformList(name, ep, [ep.port]).flatten()[0])}}
-                        : {"tcpSocket": {"port": parameters.probes.?port.orValue(
+                        : {"tcpSocket": {"port": parameters.probes.liveness.?port.orValue(
                             workload.endpoints.transformList(name, ep, [ep.port]).flatten()[0])}}
                     ) : oc_omit()}
                   env: ${dependencies.toContainerEnvs()}

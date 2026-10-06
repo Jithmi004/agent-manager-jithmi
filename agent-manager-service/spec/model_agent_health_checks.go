@@ -19,8 +19,6 @@ var _ MappedNullable = &AgentHealthChecks{}
 
 // AgentHealthChecks The agent's health checks. Set at build time because they depend on the agent image; they apply to every environment from the next deploy, and their wait times are the baseline an environment may override. In a request, omitted fields keep their current values (platform defaults for a new agent). In a configurations response, the checks in effect for that environment.
 type AgentHealthChecks struct {
-	// Port the checks run against. Defaults to the agent's port.
-	Port      *int32            `json:"port,omitempty"`
 	Startup   *AgentHealthCheck `json:"startup,omitempty"`
 	Readiness *AgentHealthCheck `json:"readiness,omitempty"`
 	Liveness  *AgentHealthCheck `json:"liveness,omitempty"`
@@ -41,38 +39,6 @@ func NewAgentHealthChecks() *AgentHealthChecks {
 func NewAgentHealthChecksWithDefaults() *AgentHealthChecks {
 	this := AgentHealthChecks{}
 	return &this
-}
-
-// GetPort returns the Port field value if set, zero value otherwise.
-func (o *AgentHealthChecks) GetPort() int32 {
-	if o == nil || IsNil(o.Port) {
-		var ret int32
-		return ret
-	}
-	return *o.Port
-}
-
-// GetPortOk returns a tuple with the Port field value if set, nil otherwise
-// and a boolean to check if the value has been set.
-func (o *AgentHealthChecks) GetPortOk() (*int32, bool) {
-	if o == nil || IsNil(o.Port) {
-		return nil, false
-	}
-	return o.Port, true
-}
-
-// HasPort returns a boolean if a field has been set.
-func (o *AgentHealthChecks) HasPort() bool {
-	if o != nil && !IsNil(o.Port) {
-		return true
-	}
-
-	return false
-}
-
-// SetPort gets a reference to the given int32 and assigns it to the Port field.
-func (o *AgentHealthChecks) SetPort(v int32) {
-	o.Port = &v
 }
 
 // GetStartup returns the Startup field value if set, zero value otherwise.
@@ -181,9 +147,6 @@ func (o AgentHealthChecks) MarshalJSON() ([]byte, error) {
 
 func (o AgentHealthChecks) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
-	if !IsNil(o.Port) {
-		toSerialize["port"] = o.Port
-	}
 	if !IsNil(o.Startup) {
 		toSerialize["startup"] = o.Startup
 	}

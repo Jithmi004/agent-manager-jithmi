@@ -31,6 +31,8 @@ type AgentHealthCheck struct {
 	Enabled *bool `json:"enabled,omitempty"`
 	// tcp passes when the health port accepts a connection; http passes when a GET to path on the health port returns a 2xx or 3xx status.
 	Type *string `json:"type,omitempty"`
+	// Port the checks run against. Defaults to the agent's port.
+	Port *int32 `json:"port,omitempty"`
 	// Path requested when type is http (e.g. \"/health\").
 	Path *string `json:"path,omitempty"`
 }
@@ -244,6 +246,38 @@ func (o *AgentHealthCheck) SetType(v string) {
 	o.Type = &v
 }
 
+// GetPort returns the Port field value if set, zero value otherwise.
+func (o *AgentHealthCheck) GetPort() int32 {
+	if o == nil || IsNil(o.Port) {
+		var ret int32
+		return ret
+	}
+	return *o.Port
+}
+
+// GetPortOk returns a tuple with the Port field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *AgentHealthCheck) GetPortOk() (*int32, bool) {
+	if o == nil || IsNil(o.Port) {
+		return nil, false
+	}
+	return o.Port, true
+}
+
+// HasPort returns a boolean if a field has been set.
+func (o *AgentHealthCheck) HasPort() bool {
+	if o != nil && !IsNil(o.Port) {
+		return true
+	}
+
+	return false
+}
+
+// SetPort gets a reference to the given int32 and assigns it to the Port field.
+func (o *AgentHealthCheck) SetPort(v int32) {
+	o.Port = &v
+}
+
 // GetPath returns the Path field value if set, zero value otherwise.
 func (o *AgentHealthCheck) GetPath() string {
 	if o == nil || IsNil(o.Path) {
@@ -303,6 +337,9 @@ func (o AgentHealthCheck) ToMap() (map[string]interface{}, error) {
 	}
 	if !IsNil(o.Type) {
 		toSerialize["type"] = o.Type
+	}
+	if !IsNil(o.Port) {
+		toSerialize["port"] = o.Port
 	}
 	if !IsNil(o.Path) {
 		toSerialize["path"] = o.Path

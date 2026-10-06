@@ -11673,6 +11673,12 @@ components:
               description: >-
                 tcp passes when the health port accepts a connection; http passes
                 when a GET to path on the health port returns a 2xx or 3xx status.
+            port:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 65535
+              description: Port the checks run against. Defaults to the agent's port.
             path:
               type: string
               pattern: "^/"
@@ -11689,12 +11695,6 @@ components:
         a new agent). In a configurations response, the checks in effect for
         that environment.
       properties:
-        port:
-          type: integer
-          format: int32
-          minimum: 1
-          maximum: 65535
-          description: Port the checks run against. Defaults to the agent's port.
         startup:
           $ref: "#/components/schemas/AgentHealthCheck"
         readiness:
