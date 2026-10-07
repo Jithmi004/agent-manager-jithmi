@@ -125,6 +125,7 @@ func buildInternalAgentFromKindComponentRequestBody(namespaceName, projectName s
 		Exposed:   true,
 		Resources: resourceParams,
 		RoutePath: req.Name,
+		Probes:    req.HealthChecks,
 	}
 	parameters, err := structToMap(defaultParams)
 	if err != nil {
@@ -256,6 +257,7 @@ func buildInternalAgentFromSourceComponentRequestBody(namespaceName, projectName
 		Exposed:   true,
 		Resources: resourceParams,
 		RoutePath: req.Name,
+		Probes:    req.HealthChecks,
 	}
 
 	// Convert struct to map for OpenChoreo API
@@ -1285,12 +1287,16 @@ func (c *openChoreoClient) GetEnvHealthChecks(ctx context.Context, ouID, compone
 		effective = mergeMaps(effective, probesIn(*component.Spec.Parameters))
 	}
 
-	binding, err := c.findReleaseBindingForEnv(ctx, namespaceName, componentName, environment)
-	if err != nil {
-		return nil, err
-	}
-	if binding != nil && binding.Spec != nil && binding.Spec.ComponentTypeEnvironmentConfigs != nil {
-		effective = mergeMaps(effective, probesIn(*binding.Spec.ComponentTypeEnvironmentConfigs))
+	// Without an environment, the result is the agent's build-time health
+	// checks: the defaults with its own values on top.
+	if environment != "" {
+		binding, err := c.findReleaseBindingForEnv(ctx, namespaceName, componentName, environment)
+		if err != nil {
+			return nil, err
+		}
+		if binding != nil && binding.Spec != nil && binding.Spec.ComponentTypeEnvironmentConfigs != nil {
+			effective = mergeMaps(effective, probesIn(*binding.Spec.ComponentTypeEnvironmentConfigs))
+		}
 	}
 
 	data, err := json.Marshal(effective)
@@ -1388,6 +1394,24 @@ func mergeEnvProbeTimings(rb *gen.ReleaseBinding, sent map[string]interface{}) {
 	}
 	configs := *rb.Spec.ComponentTypeEnvironmentConfigs
 	configs[probesKey] = mergeMaps(probesIn(configs), sent)
+}
+
+// setEnvProbes makes an environment's health check wait times (its binding's
+// componentTypeEnvironmentConfigs.probes) the given ones, or removes them when
+// probes is nil. Promote uses it to copy the source environment's wait times.
+func setEnvProbes(spec *gen.ReleaseBindingSpec, probes map[string]interface{}) {
+	if spec.ComponentTypeEnvironmentConfigs == nil {
+		if probes == nil {
+			return
+		}
+		configs := make(map[string]interface{})
+		spec.ComponentTypeEnvironmentConfigs = &configs
+	}
+	if probes == nil {
+		delete(*spec.ComponentTypeEnvironmentConfigs, probesKey)
+		return
+	}
+	(*spec.ComponentTypeEnvironmentConfigs)[probesKey] = probes
 }
 
 func (c *openChoreoClient) DeleteComponent(ctx context.Context, ouID, projectName, componentName string) error {

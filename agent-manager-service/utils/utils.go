@@ -88,7 +88,9 @@ func ValidateAgentBuildParametersUpdatePayload(payload spec.UpdateAgentBuildPara
 	); err != nil {
 		return err
 	}
-
+	if err := ValidateHealthChecks(payload.HealthChecks); err != nil {
+		return NewValidationError("Invalid health checks", err.Error())
+	}
 	return nil
 }
 
@@ -348,6 +350,16 @@ func ValidateAgentCreatePayload(payload spec.CreateAgentRequest) error {
 			return err
 		}
 	}
+
+	if payload.HealthChecks != nil {
+		if payload.Provisioning.Type != string(InternalAgent) {
+			return NewValidationError("Invalid health checks", "health checks apply only to agents hosted by the platform")
+		}
+		if err := ValidateHealthChecks(payload.HealthChecks); err != nil {
+			return NewValidationError("Invalid health checks", err.Error())
+		}
+	}
+
 	return validateAgentPayload(agentPayload{
 		name:           payload.Name,
 		displayName:    payload.DisplayName,
@@ -1106,6 +1118,55 @@ func int32ValueOr(v, fallback *int32) int32 {
 		return *fallback
 	}
 	return 0
+}
+
+// ValidateHealthChecks checks an agent's build-time health checks: each check's
+// type, port and path, its wait times' ranges and the startup check's limit.
+func ValidateHealthChecks(checks *spec.AgentHealthChecks) error {
+	if checks == nil {
+		return nil
+	}
+	all := []struct {
+		name  string
+		check *spec.AgentHealthCheck
+	}{
+		{"startup", checks.Startup},
+		{"readiness", checks.Readiness},
+		{"liveness", checks.Liveness},
+	}
+	for _, c := range all {
+		if c.check == nil {
+			continue
+		}
+		if t := c.check.Type; t != nil && *t != "tcp" && *t != "http" {
+			return fmt.Errorf("%s type must be tcp or http", c.name)
+		}
+		if p := c.check.Port; p != nil && (*p < 1 || *p > 65535) {
+			return fmt.Errorf("%s port must be between 1 and 65535", c.name)
+		}
+		if p := c.check.Path; p != nil && !strings.HasPrefix(*p, "/") {
+			return fmt.Errorf("%s path must start with /", c.name)
+		}
+	}
+	timings := &spec.AgentHealthCheckTimings{
+		Startup:   probeTimingsOf(checks.Startup),
+		Readiness: probeTimingsOf(checks.Readiness),
+		Liveness:  probeTimingsOf(checks.Liveness),
+	}
+	return ValidateHealthCheckTimings(timings, checks)
+}
+
+// probeTimingsOf returns a check's wait times, or nil for no check.
+func probeTimingsOf(c *spec.AgentHealthCheck) *spec.AgentProbeTimings {
+	if c == nil {
+		return nil
+	}
+	return &spec.AgentProbeTimings{
+		InitialDelaySeconds: c.InitialDelaySeconds,
+		PeriodSeconds:       c.PeriodSeconds,
+		TimeoutSeconds:      c.TimeoutSeconds,
+		FailureThreshold:    c.FailureThreshold,
+	}
 }
 
 // validateEnvironmentVariables validates environment variables if present in the payload
