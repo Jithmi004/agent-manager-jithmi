@@ -1012,14 +1012,36 @@ func (c *openChoreoClient) getEnvConfigDefaultsFromComponentType(ctx context.Con
 		return response, nil
 	}
 
-	// Get the ClusterComponentType name from component reference
+	ctSpec, err := c.getComponentTypeSpec(ctx, namespaceName, component)
+	if err != nil {
+		return nil, err
+	}
+
+	if ctSpec != nil && ctSpec.EnvironmentConfigs != nil && ctSpec.EnvironmentConfigs.OpenAPIV3Schema != nil {
+		// Extract defaults from schema (covers replicas/autoscaling, which the
+		// environmentConfigs schema declares defaults for).
+		applySchemaDefaults(response, *ctSpec.EnvironmentConfigs.OpenAPIV3Schema)
+	}
+
+	// The ComponentType template's resources fields fall back to the component's own
+	// baseline parameters (`parameters.resources.*`) at render time — the
+	// environmentConfigs schema declares no cpu/memory defaults, so relying on it alone
+	// (as above) always reports blank resources when no per-environment override
+	// exists. Overlay the component's actual baseline so this reports what the agent
+	// is really running with.
+	applyComponentResourceParameterDefaults(response.Resources, component.Spec.Parameters)
+	return response, nil
+}
+
+// getComponentTypeSpec fetches the spec of the ComponentType a component is built from — the
+// agent-api.yaml schemas and templates, including the defaults they declare.
+func (c *openChoreoClient) getComponentTypeSpec(ctx context.Context, namespaceName string, component *gen.Component) (*gen.ComponentTypeSpec, error) {
 	// The name may be prefixed with "deployment/" or similar, extract just the name part
 	ctName := component.Spec.ComponentType.Name
 	if parts := strings.Split(ctName, "/"); len(parts) > 1 {
 		ctName = parts[len(parts)-1]
 	}
 
-	// Fetch ClusterComponentType
 	ctResp, err := c.ocClient.GetComponentTypeWithResponse(ctx, namespaceName, ctName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster component type: %w", err)
@@ -1035,21 +1057,7 @@ func (c *openChoreoClient) getEnvConfigDefaultsFromComponentType(ctx context.Con
 	if ctResp.JSON200 == nil {
 		return nil, fmt.Errorf("empty response from get cluster component type")
 	}
-
-	if ctResp.JSON200.Spec != nil && ctResp.JSON200.Spec.EnvironmentConfigs != nil && ctResp.JSON200.Spec.EnvironmentConfigs.OpenAPIV3Schema != nil {
-		// Extract defaults from schema (covers replicas/autoscaling, which the
-		// environmentConfigs schema declares defaults for).
-		applySchemaDefaults(response, *ctResp.JSON200.Spec.EnvironmentConfigs.OpenAPIV3Schema)
-	}
-
-	// The ComponentType template's resources fields fall back to the component's own
-	// baseline parameters (`parameters.resources.*`) at render time — the
-	// environmentConfigs schema declares no cpu/memory defaults, so relying on it alone
-	// (as above) always reports blank resources when no per-environment override
-	// exists. Overlay the component's actual baseline so this reports what the agent
-	// is really running with.
-	applyComponentResourceParameterDefaults(response.Resources, component.Spec.Parameters)
-	return response, nil
+	return ctResp.JSON200.Spec, nil
 }
 
 // applyComponentResourceParameterDefaults overlays the component's own baseline
@@ -1239,6 +1247,147 @@ func toInt32(v interface{}) (int32, bool) {
 		return int32(val), true
 	}
 	return 0, false
+}
+
+// A health check's value comes from three layers, each later one getting priority over the previous:
+//  1. defaults    — the `default:` values in agent-api.yaml's parameters.probes schema
+//  2. build time  — the Component's parameters.probes (what to check + baseline wait times)
+//  3. environment — the ReleaseBinding's componentTypeEnvironmentConfigs.probes (wait times)
+func (c *openChoreoClient) GetEnvHealthChecks(ctx context.Context, ouID, componentName, environment string) (*HealthChecks, error) {
+	namespaceName := c.NamespaceFor(ouID)
+
+	componentResponse, err := c.ocClient.GetComponentWithResponse(ctx, namespaceName, componentName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get component: %w", err)
+	}
+	if componentResponse.StatusCode() != http.StatusOK {
+		return nil, handleErrorResponse(componentResponse.StatusCode(), ErrorResponses{
+			JSON401: componentResponse.JSON401,
+			JSON403: componentResponse.JSON403,
+			JSON404: componentResponse.JSON404,
+			JSON500: componentResponse.JSON500,
+		})
+	}
+	if componentResponse.JSON200 == nil || componentResponse.JSON200.Spec == nil {
+		return nil, fmt.Errorf("empty response from get component")
+	}
+	component := componentResponse.JSON200
+
+	ctSpec, err := c.getComponentTypeSpec(ctx, namespaceName, component)
+	if err != nil {
+		return nil, err
+	}
+	effective, ok := healthCheckDefaults(ctSpec)
+	if !ok {
+		return nil, nil //nolint:nilnil // the ComponentType defines no health checks
+	}
+	if component.Spec.Parameters != nil {
+		effective = mergeMaps(effective, probesIn(*component.Spec.Parameters))
+	}
+
+	binding, err := c.findReleaseBindingForEnv(ctx, namespaceName, componentName, environment)
+	if err != nil {
+		return nil, err
+	}
+	if binding != nil && binding.Spec != nil && binding.Spec.ComponentTypeEnvironmentConfigs != nil {
+		effective = mergeMaps(effective, probesIn(*binding.Spec.ComponentTypeEnvironmentConfigs))
+	}
+
+	data, err := json.Marshal(effective)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read health checks: %w", err)
+	}
+	var checks HealthChecks
+	if err := json.Unmarshal(data, &checks); err != nil {
+		return nil, fmt.Errorf("failed to parse health checks: %w", err)
+	}
+	return &checks, nil
+}
+
+// healthCheckDefaults reads layer 1: the defaults in the ComponentType's
+// parameters.probes schema. It reports false when the ComponentType defines no
+// health checks.
+func healthCheckDefaults(ctSpec *gen.ComponentTypeSpec) (map[string]interface{}, bool) {
+	if ctSpec == nil || ctSpec.Parameters == nil || ctSpec.Parameters.OpenAPIV3Schema == nil {
+		return nil, false
+	}
+	probesSchema, ok := lookupMap(*ctSpec.Parameters.OpenAPIV3Schema, "properties", probesKey)
+	if !ok {
+		return nil, false
+	}
+	defaults, ok := schemaDefaults(probesSchema).(map[string]interface{})
+	return defaults, ok
+}
+
+// schemaDefaults collects the `default:` values of a schema: for an object,
+// a map of its properties' defaults; otherwise the schema's own default.
+func schemaDefaults(schema map[string]interface{}) interface{} {
+	if properties, ok := schema["properties"].(map[string]interface{}); ok {
+		values := map[string]interface{}{}
+		for name, prop := range properties {
+			if propSchema, ok := prop.(map[string]interface{}); ok {
+				if v := schemaDefaults(propSchema); v != nil {
+					values[name] = v
+				}
+			}
+		}
+		return values
+	}
+	return schema["default"]
+}
+
+// lookupMap follows keys down nested maps, reporting false if any is missing.
+func lookupMap(m map[string]interface{}, keys ...string) (map[string]interface{}, bool) {
+	node := m
+	for _, key := range keys {
+		next, ok := node[key].(map[string]interface{})
+		if !ok {
+			return nil, false
+		}
+		node = next
+	}
+	return node, true
+}
+
+// probesIn returns the probes section of a parameters or environment configs
+// map, or nil when there is none.
+func probesIn(m map[string]interface{}) map[string]interface{} {
+	probes, _ := m[probesKey].(map[string]interface{})
+	return probes
+}
+
+// mergeMaps returns base with override laid on top: nested maps are merged key
+// by key, and any other value in override replaces base's. Neither input changes.
+func mergeMaps(base, override map[string]interface{}) map[string]interface{} {
+	merged := make(map[string]interface{}, len(base)+len(override))
+	for k, v := range base {
+		merged[k] = v
+	}
+	for k, v := range override {
+		baseMap, baseIsMap := merged[k].(map[string]interface{})
+		overrideMap, overrideIsMap := v.(map[string]interface{})
+		if baseIsMap && overrideIsMap {
+			merged[k] = mergeMaps(baseMap, overrideMap)
+		} else {
+			merged[k] = v
+		}
+	}
+	return merged
+}
+
+// mergeEnvProbeTimings lays wait times onto an environment's ReleaseBinding
+// (componentTypeEnvironmentConfigs.probes). Only the fields sent change; the
+// environment keeps any other wait time it already overrides.
+func mergeEnvProbeTimings(rb *gen.ReleaseBinding, sent map[string]interface{}) {
+	if sent == nil {
+		return
+	}
+	if rb.Spec.ComponentTypeEnvironmentConfigs == nil {
+		configs := make(map[string]interface{})
+		rb.Spec.ComponentTypeEnvironmentConfigs = &configs
+	}
+	configs := *rb.Spec.ComponentTypeEnvironmentConfigs
+	configs[probesKey] = mergeMaps(probesIn(configs), sent)
 }
 
 func (c *openChoreoClient) DeleteComponent(ctx context.Context, ouID, projectName, componentName string) error {

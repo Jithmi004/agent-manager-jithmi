@@ -1031,6 +1031,83 @@ func ValidateFileMounts(files []spec.FileMount) error {
 	return nil
 }
 
+// MaxStartupWindowSeconds caps how long the startup check may wait for a
+// starting agent: initial delay + interval × failures allowed.
+const MaxStartupWindowSeconds = 3600
+
+// ValidateHealthCheckTimings checks the wait times sent for one environment:
+// each value's range, and that the startup check, with the values sent on top
+// of those in effect (current), still gives up within MaxStartupWindowSeconds.
+func ValidateHealthCheckTimings(timings *spec.AgentHealthCheckTimings, current *spec.AgentHealthChecks) error {
+	if timings == nil {
+		return nil
+	}
+	checks := []struct {
+		name    string
+		timings *spec.AgentProbeTimings
+	}{
+		{"startup", timings.Startup},
+		{"readiness", timings.Readiness},
+		{"liveness", timings.Liveness},
+	}
+	for _, check := range checks {
+		if err := validateProbeTimings(check.name, check.timings); err != nil {
+			return err
+		}
+	}
+
+	sent := timings.Startup
+	if sent == nil || current == nil || current.Startup == nil {
+		return nil
+	}
+	inEffect := current.Startup
+	if inEffect.Enabled != nil && !*inEffect.Enabled {
+		return nil
+	}
+	initialDelay := int32ValueOr(sent.InitialDelaySeconds, inEffect.InitialDelaySeconds)
+	period := int32ValueOr(sent.PeriodSeconds, inEffect.PeriodSeconds)
+	failures := int32ValueOr(sent.FailureThreshold, inEffect.FailureThreshold)
+	if window := initialDelay + period*failures; window > MaxStartupWindowSeconds {
+		return fmt.Errorf("startup check would wait up to %d seconds (initial delay + interval × failures allowed); the maximum is %d",
+			window, MaxStartupWindowSeconds)
+	}
+	return nil
+}
+
+// validateProbeTimings checks each wait time sent for one check is in range.
+func validateProbeTimings(check string, t *spec.AgentProbeTimings) error {
+	if t == nil {
+		return nil
+	}
+	fields := []struct {
+		name     string
+		value    *int32
+		min, max int32
+	}{
+		{"initialDelaySeconds", t.InitialDelaySeconds, 0, 3600},
+		{"periodSeconds", t.PeriodSeconds, 1, 3600},
+		{"timeoutSeconds", t.TimeoutSeconds, 1, 3600},
+		{"failureThreshold", t.FailureThreshold, 1, 1000},
+	}
+	for _, f := range fields {
+		if f.value != nil && (*f.value < f.min || *f.value > f.max) {
+			return fmt.Errorf("%s %s must be between %d and %d", check, f.name, f.min, f.max)
+		}
+	}
+	return nil
+}
+
+// int32ValueOr returns the first of v, fallback that is set, or 0.
+func int32ValueOr(v, fallback *int32) int32 {
+	if v != nil {
+		return *v
+	}
+	if fallback != nil {
+		return *fallback
+	}
+	return 0
+}
+
 // validateEnvironmentVariables validates environment variables if present in the payload
 // Environment variables are optional, but if provided, they must follow naming conventions
 func validateEnvironmentVariables(envVars []spec.EnvironmentVariable) error {
