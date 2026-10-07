@@ -5142,6 +5142,24 @@ func (s *agentManagerService) UpdateAgentConfigurations(ctx context.Context, ouI
 		return err
 	}
 
+	// Health check wait times are checked against the values in effect, so the
+	// startup check stays within its limit. An agent with none in effect (an
+	// external agent, say) has no health checks to change.
+	var probeTimings *client.HealthCheckTimings
+	if req.Probes != nil {
+		current, err := s.ocClient.GetEnvHealthChecks(ctx, ouID, agentName, req.EnvironmentName)
+		if err != nil {
+			return fmt.Errorf("failed to get agent health checks: %w", err)
+		}
+		if current == nil {
+			return fmt.Errorf("%w: this agent has no health checks to configure", utils.ErrInvalidInput)
+		}
+		if err := utils.ValidateHealthCheckTimings(req.Probes, convertClientHealthChecksToSpec(current)); err != nil {
+			return fmt.Errorf("%w: %s", utils.ErrInvalidInput, err.Error())
+		}
+		probeTimings = convertSpecTimingsToClient(req.Probes)
+	}
+
 	// Fetch system-managed env vars + their keys for the target env. We must filter the user's
 	// env list to drop these before processEnvVars (which would otherwise mangle their secret
 	// key refs), then re-append the canonical system values.
@@ -5207,12 +5225,12 @@ func (s *agentManagerService) UpdateAgentConfigurations(ctx context.Context, ouI
 		}
 	}
 
-	if envOverrides == nil && fileOverrides == nil {
+	if envOverrides == nil && fileOverrides == nil && probeTimings == nil {
 		// Nothing requested — surface as a clear error rather than silently no-op'ing.
-		return fmt.Errorf("%w: request must include env or files", utils.ErrInvalidInput)
+		return fmt.Errorf("%w: request must include env, files or probes", utils.ErrInvalidInput)
 	}
 
-	if err := s.ocClient.ReplaceReleaseBindingWorkloadOverrides(ctx, ouID, agentName, req.EnvironmentName, envOverrides, fileOverrides); err != nil {
+	if err := s.ocClient.ReplaceReleaseBindingWorkloadOverrides(ctx, ouID, agentName, req.EnvironmentName, envOverrides, fileOverrides, probeTimings); err != nil {
 		s.logger.Error("Failed to replace release binding workload overrides", "agentName", agentName, "environment", req.EnvironmentName, "error", err)
 		return fmt.Errorf("failed to update agent configurations: %w", err)
 	}
@@ -6129,6 +6147,26 @@ func convertClientHealthChecksToSpec(h *client.HealthChecks) *spec.AgentHealthCh
 		Startup:   convert(h.Startup),
 		Readiness: convert(h.Readiness),
 		Liveness:  convert(h.Liveness),
+	}
+}
+
+// convertSpecTimingsToClient maps the API's wait times to the client's type.
+func convertSpecTimingsToClient(t *spec.AgentHealthCheckTimings) *client.HealthCheckTimings {
+	convert := func(p *spec.AgentProbeTimings) *client.ProbeTimings {
+		if p == nil {
+			return nil
+		}
+		return &client.ProbeTimings{
+			InitialDelaySeconds: p.InitialDelaySeconds,
+			PeriodSeconds:       p.PeriodSeconds,
+			TimeoutSeconds:      p.TimeoutSeconds,
+			FailureThreshold:    p.FailureThreshold,
+		}
+	}
+	return &client.HealthCheckTimings{
+		Startup:   convert(t.Startup),
+		Readiness: convert(t.Readiness),
+		Liveness:  convert(t.Liveness),
 	}
 }
 

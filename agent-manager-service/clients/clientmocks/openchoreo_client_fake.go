@@ -213,7 +213,7 @@ import (
 //			ReplaceReleaseBindingEnvVarsFunc: func(ctx context.Context, ouID string, projectName string, componentName string, envName string, keysToRemove []string, envVarsToAdd []client.EnvVar) error {
 //				panic("mock out the ReplaceReleaseBindingEnvVars method")
 //			},
-//			ReplaceReleaseBindingWorkloadOverridesFunc: func(ctx context.Context, ouID string, componentName string, environment string, envOverrides []client.EnvVar, fileOverrides []client.FileVar) error {
+//			ReplaceReleaseBindingWorkloadOverridesFunc: func(ctx context.Context, ouID string, componentName string, environment string, envOverrides []client.EnvVar, fileOverrides []client.FileVar, probeTimings *client.HealthCheckTimings) error {
 //				panic("mock out the ReplaceReleaseBindingWorkloadOverrides method")
 //			},
 //			TriggerBuildFunc: func(ctx context.Context, ouID string, projectName string, componentName string, commitID string) (*models.BuildResponse, error) {
@@ -458,7 +458,7 @@ type OpenChoreoClientMock struct {
 	ReplaceReleaseBindingEnvVarsFunc func(ctx context.Context, ouID string, projectName string, componentName string, envName string, keysToRemove []string, envVarsToAdd []client.EnvVar) error
 
 	// ReplaceReleaseBindingWorkloadOverridesFunc mocks the ReplaceReleaseBindingWorkloadOverrides method.
-	ReplaceReleaseBindingWorkloadOverridesFunc func(ctx context.Context, ouID string, componentName string, environment string, envOverrides []client.EnvVar, fileOverrides []client.FileVar) error
+	ReplaceReleaseBindingWorkloadOverridesFunc func(ctx context.Context, ouID string, componentName string, environment string, envOverrides []client.EnvVar, fileOverrides []client.FileVar, probeTimings *client.HealthCheckTimings) error
 
 	// TriggerBuildFunc mocks the TriggerBuild method.
 	TriggerBuildFunc func(ctx context.Context, ouID string, projectName string, componentName string, commitID string) (*models.BuildResponse, error)
@@ -1212,6 +1212,8 @@ type OpenChoreoClientMock struct {
 			EnvOverrides []client.EnvVar
 			// FileOverrides is the fileOverrides argument value.
 			FileOverrides []client.FileVar
+			// ProbeTimings is the probeTimings argument value.
+			ProbeTimings *client.HealthCheckTimings
 		}
 		// TriggerBuild holds details about calls to the TriggerBuild method.
 		TriggerBuild []struct {
@@ -4293,7 +4295,7 @@ func (mock *OpenChoreoClientMock) ReplaceReleaseBindingEnvVarsCalls() []struct {
 }
 
 // ReplaceReleaseBindingWorkloadOverrides calls ReplaceReleaseBindingWorkloadOverridesFunc.
-func (mock *OpenChoreoClientMock) ReplaceReleaseBindingWorkloadOverrides(ctx context.Context, ouID string, componentName string, environment string, envOverrides []client.EnvVar, fileOverrides []client.FileVar) error {
+func (mock *OpenChoreoClientMock) ReplaceReleaseBindingWorkloadOverrides(ctx context.Context, ouID string, componentName string, environment string, envOverrides []client.EnvVar, fileOverrides []client.FileVar, probeTimings *client.HealthCheckTimings) error {
 	if mock.ReplaceReleaseBindingWorkloadOverridesFunc == nil {
 		panic("OpenChoreoClientMock.ReplaceReleaseBindingWorkloadOverridesFunc: method is nil but OpenChoreoClient.ReplaceReleaseBindingWorkloadOverrides was just called")
 	}
@@ -4304,6 +4306,7 @@ func (mock *OpenChoreoClientMock) ReplaceReleaseBindingWorkloadOverrides(ctx con
 		Environment   string
 		EnvOverrides  []client.EnvVar
 		FileOverrides []client.FileVar
+		ProbeTimings  *client.HealthCheckTimings
 	}{
 		Ctx:           ctx,
 		OuID:          ouID,
@@ -4311,11 +4314,12 @@ func (mock *OpenChoreoClientMock) ReplaceReleaseBindingWorkloadOverrides(ctx con
 		Environment:   environment,
 		EnvOverrides:  envOverrides,
 		FileOverrides: fileOverrides,
+		ProbeTimings:  probeTimings,
 	}
 	mock.lockReplaceReleaseBindingWorkloadOverrides.Lock()
 	mock.calls.ReplaceReleaseBindingWorkloadOverrides = append(mock.calls.ReplaceReleaseBindingWorkloadOverrides, callInfo)
 	mock.lockReplaceReleaseBindingWorkloadOverrides.Unlock()
-	return mock.ReplaceReleaseBindingWorkloadOverridesFunc(ctx, ouID, componentName, environment, envOverrides, fileOverrides)
+	return mock.ReplaceReleaseBindingWorkloadOverridesFunc(ctx, ouID, componentName, environment, envOverrides, fileOverrides, probeTimings)
 }
 
 // ReplaceReleaseBindingWorkloadOverridesCalls gets all the calls that were made to ReplaceReleaseBindingWorkloadOverrides.
@@ -4329,6 +4333,7 @@ func (mock *OpenChoreoClientMock) ReplaceReleaseBindingWorkloadOverridesCalls() 
 	Environment   string
 	EnvOverrides  []client.EnvVar
 	FileOverrides []client.FileVar
+	ProbeTimings  *client.HealthCheckTimings
 } {
 	var calls []struct {
 		Ctx           context.Context
@@ -4337,6 +4342,7 @@ func (mock *OpenChoreoClientMock) ReplaceReleaseBindingWorkloadOverridesCalls() 
 		Environment   string
 		EnvOverrides  []client.EnvVar
 		FileOverrides []client.FileVar
+		ProbeTimings  *client.HealthCheckTimings
 	}
 	mock.lockReplaceReleaseBindingWorkloadOverrides.RLock()
 	calls = mock.calls.ReplaceReleaseBindingWorkloadOverrides

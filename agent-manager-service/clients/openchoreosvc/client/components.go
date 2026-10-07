@@ -1253,8 +1253,6 @@ func toInt32(v interface{}) (int32, bool) {
 //  1. defaults    — the `default:` values in agent-api.yaml's parameters.probes schema
 //  2. build time  — the Component's parameters.probes (what to check + baseline wait times)
 //  3. environment — the ReleaseBinding's componentTypeEnvironmentConfigs.probes (wait times)
-//
-// Layers 2 and 3 store only the fields someone set.
 func (c *openChoreoClient) GetEnvHealthChecks(ctx context.Context, ouID, componentName, environment string) (*HealthChecks, error) {
 	namespaceName := c.NamespaceFor(ouID)
 
@@ -1279,52 +1277,50 @@ func (c *openChoreoClient) GetEnvHealthChecks(ctx context.Context, ouID, compone
 	if err != nil {
 		return nil, err
 	}
-	defaults, ok := healthCheckDefaults(ctSpec)
+	effective, ok := healthCheckDefaults(ctSpec)
 	if !ok {
 		return nil, nil //nolint:nilnil // the ComponentType defines no health checks
 	}
-
-	var buildTime HealthChecks
 	if component.Spec.Parameters != nil {
-		if err := probesFromMap(*component.Spec.Parameters, &buildTime); err != nil {
-			return nil, err
-		}
+		effective = mergeMaps(effective, probesIn(*component.Spec.Parameters))
 	}
 
 	binding, err := c.findReleaseBindingForEnv(ctx, namespaceName, componentName, environment)
 	if err != nil {
 		return nil, err
 	}
-	var envTimings HealthCheckTimings
 	if binding != nil && binding.Spec != nil && binding.Spec.ComponentTypeEnvironmentConfigs != nil {
-		if err := probesFromMap(*binding.Spec.ComponentTypeEnvironmentConfigs, &envTimings); err != nil {
-			return nil, err
-		}
+		effective = mergeMaps(effective, probesIn(*binding.Spec.ComponentTypeEnvironmentConfigs))
 	}
 
-	effective := effectiveHealthChecks(defaults, &buildTime, &envTimings)
-	return &effective, nil
+	data, err := json.Marshal(effective)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read health checks: %w", err)
+	}
+	var checks HealthChecks
+	if err := json.Unmarshal(data, &checks); err != nil {
+		return nil, fmt.Errorf("failed to parse health checks: %w", err)
+	}
+	return &checks, nil
 }
 
-func healthCheckDefaults(ctSpec *gen.ComponentTypeSpec) (HealthChecks, bool) {
-	var defaults HealthChecks
+// healthCheckDefaults reads layer 1: the defaults in the ComponentType's
+// parameters.probes schema. It reports false when the ComponentType defines no
+// health checks.
+func healthCheckDefaults(ctSpec *gen.ComponentTypeSpec) (map[string]interface{}, bool) {
 	if ctSpec == nil || ctSpec.Parameters == nil || ctSpec.Parameters.OpenAPIV3Schema == nil {
-		return defaults, false
+		return nil, false
 	}
 	probesSchema, ok := lookupMap(*ctSpec.Parameters.OpenAPIV3Schema, "properties", probesKey)
 	if !ok {
-		return defaults, false
+		return nil, false
 	}
-	values, ok := schemaDefaults(probesSchema).(map[string]interface{})
-	if !ok {
-		return defaults, false
-	}
-	if err := probesFromMap(map[string]interface{}{probesKey: values}, &defaults); err != nil {
-		return defaults, false
-	}
-	return defaults, true
+	defaults, ok := schemaDefaults(probesSchema).(map[string]interface{})
+	return defaults, ok
 }
 
+// schemaDefaults collects the `default:` values of a schema: for an object,
+// a map of its properties' defaults; otherwise the schema's own default.
 func schemaDefaults(schema map[string]interface{}) interface{} {
 	if properties, ok := schema["properties"].(map[string]interface{}); ok {
 		values := map[string]interface{}{}
@@ -1340,6 +1336,7 @@ func schemaDefaults(schema map[string]interface{}) interface{} {
 	return schema["default"]
 }
 
+// lookupMap follows keys down nested maps, reporting false if any is missing.
 func lookupMap(m map[string]interface{}, keys ...string) (map[string]interface{}, bool) {
 	node := m
 	for _, key := range keys {
@@ -1352,100 +1349,45 @@ func lookupMap(m map[string]interface{}, keys ...string) (map[string]interface{}
 	return node, true
 }
 
-func probesFromMap(m map[string]interface{}, out interface{}) error {
-	raw, ok := m[probesKey]
-	if !ok || raw == nil {
-		return nil
-	}
-	data, err := json.Marshal(raw)
-	if err != nil {
-		return fmt.Errorf("failed to read health checks: %w", err)
-	}
-	if err := json.Unmarshal(data, out); err != nil {
-		return fmt.Errorf("failed to parse health checks: %w", err)
-	}
-	return nil
+// probesIn returns the probes section of a parameters or environment configs
+// map, or nil when there is none.
+func probesIn(m map[string]interface{}) map[string]interface{} {
+	probes, _ := m[probesKey].(map[string]interface{})
+	return probes
 }
 
-// effectiveHealthChecks combines the three layers: the defaults, with the build-time values on
-// top, with the environment's wait-time overrides on top.
-func effectiveHealthChecks(defaults HealthChecks, buildTime *HealthChecks, envTimings *HealthCheckTimings) HealthChecks {
-	effective := HealthChecks{}
-	effective.overlay(&defaults)
-	effective.overlay(buildTime)
-	effective.applyEnvTimings(envTimings)
-	return effective
-}
-
-// overlay copies every check set in src onto h, field by field.
-func (h *HealthChecks) overlay(src *HealthChecks) {
-	if src == nil {
-		return
+// mergeMaps returns base with override laid on top: nested maps are merged key
+// by key, and any other value in override replaces base's. Neither input changes.
+func mergeMaps(base, override map[string]interface{}) map[string]interface{} {
+	merged := make(map[string]interface{}, len(base)+len(override))
+	for k, v := range base {
+		merged[k] = v
 	}
-	overlayCheck := func(dst **HealthCheck, s *HealthCheck) {
-		if s == nil {
-			return
+	for k, v := range override {
+		baseMap, baseIsMap := merged[k].(map[string]interface{})
+		overrideMap, overrideIsMap := v.(map[string]interface{})
+		if baseIsMap && overrideIsMap {
+			merged[k] = mergeMaps(baseMap, overrideMap)
+		} else {
+			merged[k] = v
 		}
-		if *dst == nil {
-			*dst = &HealthCheck{}
-		}
-		(*dst).overlay(s)
 	}
-	overlayCheck(&h.Startup, src.Startup)
-	overlayCheck(&h.Readiness, src.Readiness)
-	overlayCheck(&h.Liveness, src.Liveness)
+	return merged
 }
 
-func (c *HealthCheck) overlay(src *HealthCheck) {
-	if src == nil {
+// mergeEnvProbeTimings lays wait times onto an environment's ReleaseBinding
+// (componentTypeEnvironmentConfigs.probes). Only the fields sent change; the
+// environment keeps any other wait time it already overrides.
+func mergeEnvProbeTimings(rb *gen.ReleaseBinding, sent map[string]interface{}) {
+	if sent == nil {
 		return
 	}
-	if src.Enabled != nil {
-		c.Enabled = src.Enabled
+	if rb.Spec.ComponentTypeEnvironmentConfigs == nil {
+		configs := make(map[string]interface{})
+		rb.Spec.ComponentTypeEnvironmentConfigs = &configs
 	}
-	if src.Type != nil {
-		c.Type = src.Type
-	}
-	if src.Port != nil {
-		c.Port = src.Port
-	}
-	if src.Path != nil {
-		c.Path = src.Path
-	}
-	c.overlayTimings(&src.ProbeTimings)
-}
-
-func (h *HealthChecks) applyEnvTimings(env *HealthCheckTimings) {
-	if env == nil {
-		return
-	}
-	if h.Startup != nil {
-		h.Startup.overlayTimings(env.Startup)
-	}
-	if h.Readiness != nil {
-		h.Readiness.overlayTimings(env.Readiness)
-	}
-	if h.Liveness != nil {
-		h.Liveness.overlayTimings(env.Liveness)
-	}
-}
-
-func (t *ProbeTimings) overlayTimings(src *ProbeTimings) {
-	if src == nil {
-		return
-	}
-	if src.InitialDelaySeconds != nil {
-		t.InitialDelaySeconds = src.InitialDelaySeconds
-	}
-	if src.PeriodSeconds != nil {
-		t.PeriodSeconds = src.PeriodSeconds
-	}
-	if src.TimeoutSeconds != nil {
-		t.TimeoutSeconds = src.TimeoutSeconds
-	}
-	if src.FailureThreshold != nil {
-		t.FailureThreshold = src.FailureThreshold
-	}
+	configs := *rb.Spec.ComponentTypeEnvironmentConfigs
+	configs[probesKey] = mergeMaps(probesIn(configs), sent)
 }
 
 func (c *openChoreoClient) DeleteComponent(ctx context.Context, ouID, projectName, componentName string) error {

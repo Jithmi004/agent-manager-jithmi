@@ -151,7 +151,7 @@ type OpenChoreoClient interface {
 	// EnsureReleaseBindingRuntimeClass idempotently reconciles runtimeClassName on a binding created
 	// out-of-band by the build workflow. Writes only when the value differs (see impl).
 	EnsureReleaseBindingRuntimeClass(ctx context.Context, ouID, componentName, environment, desiredRuntimeClass string) error
-	ReplaceReleaseBindingWorkloadOverrides(ctx context.Context, ouID, componentName, environment string, envOverrides []EnvVar, fileOverrides []FileVar) error
+	ReplaceReleaseBindingWorkloadOverrides(ctx context.Context, ouID, componentName, environment string, envOverrides []EnvVar, fileOverrides []FileVar, probeTimings *HealthCheckTimings) error
 
 	// Promotion Operations
 	PromoteComponent(ctx context.Context, ouID, projectName, componentName, sourceEnvironment, targetEnvironment string, envOverrides []EnvVar, fileOverrides []FileVar, traitEnvConfigs map[string]interface{}, componentTypeConfigs map[string]interface{}) error

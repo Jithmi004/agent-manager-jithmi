@@ -51,7 +51,7 @@ func TestUpdateAgentConfigurations(t *testing.T) {
 
 	t.Run("replacing env vars returns 204", func(t *testing.T) {
 		ocClient := apitestutils.CreateMockOpenChoreoClient()
-		ocClient.ReplaceReleaseBindingWorkloadOverridesFunc = func(ctx context.Context, namespaceName, componentName, environment string, envOverrides []client.EnvVar, fileOverrides []client.FileVar) error {
+		ocClient.ReplaceReleaseBindingWorkloadOverridesFunc = func(ctx context.Context, namespaceName, componentName, environment string, envOverrides []client.EnvVar, fileOverrides []client.FileVar, probeTimings *client.HealthCheckTimings) error {
 			return nil
 		}
 		testClients := wiring.TestClients{
