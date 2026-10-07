@@ -241,7 +241,18 @@ func (c *agentController) GetAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agentResponse := utils.ConvertToAgentResponse(agent)
+
+	// The agent's build-time health checks; no environment means no per-environment overrides.
+	healthChecks, err := c.agentService.GetAgentHealthChecks(ctx, ouID, projName, agentName, "")
+	if err != nil {
+		log.Error("GetAgent: failed to get health checks", "error", err)
+		handleCommonErrors(w, err, "Failed to get agent")
+		return
+	}
+	agentResponse.HealthChecks = healthChecks
+
 	utils.WriteSuccessResponse(w, http.StatusOK, agentResponse)
+
 }
 
 func (c *agentController) ListAgents(w http.ResponseWriter, r *http.Request) {

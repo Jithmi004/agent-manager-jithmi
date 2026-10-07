@@ -1956,6 +1956,7 @@ func (s *agentManagerService) toCreateAgentRequestWithSecrets(req *spec.CreateAg
 		AgentKind:        agentKindRef,
 		Build:            mapBuildConfig(req.Build),
 		InputInterface:   mapInputInterface(req.InputInterface),
+		HealthChecks:     convertSpecHealthChecksToClient(req.HealthChecks),
 		Labels:           labels,
 	}
 
@@ -2423,6 +2424,7 @@ func buildUpdateBuildParametersRequest(req *spec.UpdateAgentBuildParametersReque
 		Repository:     mapRepository(req.Provisioning.Repository),
 		Build:          mapBuildConfig(&req.Build),
 		InputInterface: mapInputInterface(&req.InputInterface),
+		HealthChecks:   convertSpecHealthChecksToClient(req.HealthChecks),
 		AgentType: client.AgentTypeConfig{
 			Type:    req.AgentType.Type,
 			SubType: subType,
@@ -6097,33 +6099,18 @@ func (s *agentManagerService) GetAgentEnvConfig(ctx context.Context, ouID, proje
 	return cfg, nil
 }
 
-// GetAgentHealthChecks returns the health checks in effect for an agent in an environment — what
-// its pods run. Agents the platform does not run (external agents) have none and get nil, as do
-// agents whose ComponentType defines no health checks.
+// GetAgentHealthChecks returns an agent's health checks: those in effect in the
+// environment, or its build-time ones when environment is "". nil when the
+// agent's ComponentType defines none (an external agent, say).
 func (s *agentManagerService) GetAgentHealthChecks(ctx context.Context, ouID, projectName, agentName, environment string) (*spec.AgentHealthChecks, error) {
-	agent, err := s.ocClient.GetComponent(ctx, ouID, projectName, agentName)
+	checks, err := s.ocClient.GetEnvHealthChecks(ctx, ouID, agentName, environment)
 	if err != nil {
 		return nil, translateAgentError(err)
 	}
-	if !runsAgentPods(agent) {
-		return nil, nil //nolint:nilnil // an agent without platform pods has no health checks, which is not an error
-	}
-	checks, err := s.ocClient.GetEnvHealthChecks(ctx, ouID, agentName, environment)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get agent health checks: %w", err)
-	}
 	if checks == nil {
-		return nil, nil //nolint:nilnil // the agent's ComponentType defines no health checks
+		return nil, nil //nolint:nilnil // the agent's ComponentType defines no health checks, which is not an error
 	}
 	return convertClientHealthChecksToSpec(checks), nil
-}
-
-// runsAgentPods reports whether the platform runs the agent's pods — a platform-hosted agent-api
-// agent, rendered by the agent-api ComponentType that defines its health checks.
-func runsAgentPods(agent *models.AgentResponse) bool {
-	return agent != nil &&
-		agent.Provisioning.Type == string(utils.InternalAgent) &&
-		agent.Type.Type == string(utils.AgentTypeAPI)
 }
 
 // convertClientHealthChecksToSpec maps the client's health checks to the API type.
@@ -6167,6 +6154,35 @@ func convertSpecTimingsToClient(t *spec.AgentHealthCheckTimings) *client.HealthC
 		Startup:   convert(t.Startup),
 		Readiness: convert(t.Readiness),
 		Liveness:  convert(t.Liveness),
+	}
+}
+
+// convertSpecHealthChecksToClient maps the API's health checks to the client's type.
+func convertSpecHealthChecksToClient(h *spec.AgentHealthChecks) *client.HealthChecks {
+	if h == nil {
+		return nil
+	}
+	convert := func(c *spec.AgentHealthCheck) *client.HealthCheck {
+		if c == nil {
+			return nil
+		}
+		return &client.HealthCheck{
+			Enabled: c.Enabled,
+			Type:    c.Type,
+			Port:    c.Port,
+			Path:    c.Path,
+			ProbeTimings: client.ProbeTimings{
+				InitialDelaySeconds: c.InitialDelaySeconds,
+				PeriodSeconds:       c.PeriodSeconds,
+				TimeoutSeconds:      c.TimeoutSeconds,
+				FailureThreshold:    c.FailureThreshold,
+			},
+		}
+	}
+	return &client.HealthChecks{
+		Startup:   convert(h.Startup),
+		Readiness: convert(h.Readiness),
+		Liveness:  convert(h.Liveness),
 	}
 }
 
