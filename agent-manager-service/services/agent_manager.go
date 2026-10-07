@@ -1443,6 +1443,15 @@ func (s *agentManagerService) CreateAgent(ctx context.Context, ouID string, proj
 				req.InputInterface.Schema = &spec.InputInterfaceSchema{Path: &iface.Schema.Path}
 			}
 		}
+		// Health checks describe the app in the image, like the port above, so a
+		// catalog agent starts with the source agent's unless the wizard sends its own.
+		if req.HealthChecks == nil {
+			inherited, err := s.GetAgentHealthChecks(ctx, ouID, kindVersion.Kind.ProjectName, kindVersion.Kind.AgentName, "")
+			if err != nil {
+				return fmt.Errorf("failed to resolve kind version health checks: %w", err)
+			}
+			req.HealthChecks = inherited
+		}
 		imageID = kindVersion.ImageId
 	}
 
