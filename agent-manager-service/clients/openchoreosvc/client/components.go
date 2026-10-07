@@ -1396,6 +1396,24 @@ func mergeEnvProbeTimings(rb *gen.ReleaseBinding, sent map[string]interface{}) {
 	configs[probesKey] = mergeMaps(probesIn(configs), sent)
 }
 
+// setEnvProbes makes an environment's health check wait times (its binding's
+// componentTypeEnvironmentConfigs.probes) the given ones, or removes them when
+// probes is nil. Promote uses it to copy the source environment's wait times.
+func setEnvProbes(spec *gen.ReleaseBindingSpec, probes map[string]interface{}) {
+	if spec.ComponentTypeEnvironmentConfigs == nil {
+		if probes == nil {
+			return
+		}
+		configs := make(map[string]interface{})
+		spec.ComponentTypeEnvironmentConfigs = &configs
+	}
+	if probes == nil {
+		delete(*spec.ComponentTypeEnvironmentConfigs, probesKey)
+		return
+	}
+	(*spec.ComponentTypeEnvironmentConfigs)[probesKey] = probes
+}
+
 func (c *openChoreoClient) DeleteComponent(ctx context.Context, ouID, projectName, componentName string) error {
 	namespaceName := c.NamespaceFor(ouID)
 	resp, err := c.ocClient.DeleteComponentWithResponse(ctx, namespaceName, componentName)

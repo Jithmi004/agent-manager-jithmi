@@ -252,7 +252,6 @@ func (c *agentController) GetAgent(w http.ResponseWriter, r *http.Request) {
 	agentResponse.HealthChecks = healthChecks
 
 	utils.WriteSuccessResponse(w, http.StatusOK, agentResponse)
-
 }
 
 func (c *agentController) ListAgents(w http.ResponseWriter, r *http.Request) {

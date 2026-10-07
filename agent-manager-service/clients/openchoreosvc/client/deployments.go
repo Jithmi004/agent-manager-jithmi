@@ -756,6 +756,7 @@ func (c *openChoreoClient) PromoteComponent(ctx context.Context, ouID, projectNa
 
 	// Step 2: Find the release name deployed in the source environment
 	var sourceReleaseName string
+	var sourceProbes map[string]interface{}
 	if bindingsResp.JSON200 != nil {
 		for _, b := range bindingsResp.JSON200.Items {
 			if b.Spec == nil {
@@ -766,6 +767,9 @@ func (c *openChoreoClient) PromoteComponent(ctx context.Context, ouID, projectNa
 					return fmt.Errorf("no release found in source environment %s: %w", sourceEnvironment, utils.ErrNotFound)
 				}
 				sourceReleaseName = *b.Spec.ReleaseName
+				if b.Spec.ComponentTypeEnvironmentConfigs != nil {
+					sourceProbes = probesIn(*b.Spec.ComponentTypeEnvironmentConfigs)
+				}
 				break
 			}
 		}
@@ -834,6 +838,9 @@ func (c *openChoreoClient) PromoteComponent(ctx context.Context, ouID, projectNa
 			if ctConfigs != nil {
 				binding.Spec.ComponentTypeEnvironmentConfigs = ctConfigs
 			}
+			// Health check wait times follow the source environment.
+			setEnvProbes(binding.Spec, sourceProbes)
+
 			// Force a pod rollout, for the same reason Deploy does: a re-promotion
 			// whose source release and resolved overrides are unchanged writes back a
 			// byte-identical spec, which Kubernetes treats as a no-op — no reconcile,
@@ -872,6 +879,8 @@ func (c *openChoreoClient) PromoteComponent(ctx context.Context, ouID, projectNa
 				},
 			},
 		}
+		// Health check wait times follow the source environment.
+		setEnvProbes(createBody.Spec, sourceProbes)
 
 		createResp, err := c.ocClient.CreateReleaseBindingWithResponse(ctx, namespaceName, createBody)
 		if err != nil {
