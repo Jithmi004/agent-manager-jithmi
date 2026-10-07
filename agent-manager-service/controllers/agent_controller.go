@@ -1052,6 +1052,15 @@ func (c *agentController) GetAgentConfigurations(w http.ResponseWriter, r *http.
 	}
 	utils.PopulateConfigurationResponseFromAgentConfig(&configurationsResponse, envCfg)
 
+	// Health checks live with env vars and file mounts in the response's configurations.
+	healthChecks, err := c.agentService.GetAgentHealthChecks(ctx, ouID, projName, agentName, environment)
+	if err != nil {
+		log.Error("GetAgentConfigurations: failed to get health checks", "error", err)
+		handleCommonErrors(w, err, "Failed to get configurations")
+		return
+	}
+	configurationsResponse.Configurations.Probes = healthChecks
+
 	utils.WriteSuccessResponse(w, http.StatusOK, configurationsResponse)
 }
 
