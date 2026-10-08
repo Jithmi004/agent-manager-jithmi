@@ -1253,11 +1253,47 @@ func toInt32(v interface{}) (int32, bool) {
 
 // A health check's value comes from three layers, each later one getting priority over the previous:
 //  1. defaults    — the `default:` values in agent-api.yaml's parameters.probes schema
-//  2. build time  — the Component's parameters.probes (what to check + baseline wait times)
+//  2. build time  — the agent's parameters.probes (what to check + baseline wait times)
 //  3. environment — the ReleaseBinding's componentTypeEnvironmentConfigs.probes (wait times)
+//
+// For an environment, layers 1 and 2 come from the release the environment runs (frozen at
+// deploy), so a build-time change shows there only once it is deployed. Without an environment,
+// they come from the agent as it is now: its build-time health checks.
 func (c *openChoreoClient) GetEnvHealthChecks(ctx context.Context, ouID, componentName, environment string) (*HealthChecks, error) {
 	namespaceName := c.NamespaceFor(ouID)
+	if environment == "" {
+		return c.buildTimeHealthChecks(ctx, namespaceName, componentName)
+	}
 
+	binding, err := c.findReleaseBindingForEnv(ctx, namespaceName, componentName, environment)
+	if err != nil {
+		return nil, err
+	}
+	if binding == nil || binding.Spec == nil || binding.Spec.ReleaseName == nil || *binding.Spec.ReleaseName == "" {
+		return nil, nil //nolint:nilnil // nothing is deployed in the environment yet
+	}
+	release, err := c.getComponentRelease(ctx, namespaceName, *binding.Spec.ReleaseName)
+	if err != nil {
+		return nil, err
+	}
+
+	parametersSchema, _ := lookupMap(release.Spec.ComponentType, "spec", "parameters", "openAPIV3Schema")
+	effective, ok := probeDefaults(parametersSchema)
+	if !ok {
+		return nil, nil //nolint:nilnil // the release's ComponentType defines no health checks
+	}
+	if profile := release.Spec.ComponentProfile; profile != nil && profile.Parameters != nil {
+		effective = mergeMaps(effective, probesIn(*profile.Parameters))
+	}
+	if binding.Spec.ComponentTypeEnvironmentConfigs != nil {
+		effective = mergeMaps(effective, probesIn(*binding.Spec.ComponentTypeEnvironmentConfigs))
+	}
+	return decodeHealthChecks(effective)
+}
+
+// buildTimeHealthChecks returns the agent's health checks as they are set now: its
+// ComponentType's defaults with its own parameters.probes on top.
+func (c *openChoreoClient) buildTimeHealthChecks(ctx context.Context, namespaceName, componentName string) (*HealthChecks, error) {
 	componentResponse, err := c.ocClient.GetComponentWithResponse(ctx, namespaceName, componentName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get component: %w", err)
@@ -1279,27 +1315,55 @@ func (c *openChoreoClient) GetEnvHealthChecks(ctx context.Context, ouID, compone
 	if err != nil {
 		return nil, err
 	}
-	effective, ok := healthCheckDefaults(ctSpec)
+	var parametersSchema map[string]interface{}
+	if ctSpec != nil && ctSpec.Parameters != nil && ctSpec.Parameters.OpenAPIV3Schema != nil {
+		parametersSchema = *ctSpec.Parameters.OpenAPIV3Schema
+	}
+	effective, ok := probeDefaults(parametersSchema)
 	if !ok {
 		return nil, nil //nolint:nilnil // the ComponentType defines no health checks
 	}
 	if component.Spec.Parameters != nil {
 		effective = mergeMaps(effective, probesIn(*component.Spec.Parameters))
 	}
+	return decodeHealthChecks(effective)
+}
 
-	// Without an environment, the result is the agent's build-time health
-	// checks: the defaults with its own values on top.
-	if environment != "" {
-		binding, err := c.findReleaseBindingForEnv(ctx, namespaceName, componentName, environment)
-		if err != nil {
-			return nil, err
-		}
-		if binding != nil && binding.Spec != nil && binding.Spec.ComponentTypeEnvironmentConfigs != nil {
-			effective = mergeMaps(effective, probesIn(*binding.Spec.ComponentTypeEnvironmentConfigs))
-		}
+// getComponentRelease fetches a ComponentRelease: a frozen copy of the agent and
+// its ComponentType made on each deploy.
+func (c *openChoreoClient) getComponentRelease(ctx context.Context, namespaceName, releaseName string) (*gen.ComponentRelease, error) {
+	resp, err := c.ocClient.GetComponentReleaseWithResponse(ctx, namespaceName, releaseName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get component release: %w", err)
 	}
+	if resp.StatusCode() != http.StatusOK {
+		return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+			JSON401: resp.JSON401,
+			JSON403: resp.JSON403,
+			JSON404: resp.JSON404,
+			JSON500: resp.JSON500,
+		})
+	}
+	if resp.JSON200 == nil || resp.JSON200.Spec == nil {
+		return nil, fmt.Errorf("empty response from get component release")
+	}
+	return resp.JSON200, nil
+}
 
-	data, err := json.Marshal(effective)
+// probeDefaults reads layer 1 from a ComponentType's parameters schema. It reports
+// false when the ComponentType defines no health checks.
+func probeDefaults(parametersSchema map[string]interface{}) (map[string]interface{}, bool) {
+	probesSchema, ok := lookupMap(parametersSchema, "properties", probesKey)
+	if !ok {
+		return nil, false
+	}
+	defaults, ok := schemaDefaults(probesSchema).(map[string]interface{})
+	return defaults, ok
+}
+
+// decodeHealthChecks converts merged health-check values into HealthChecks.
+func decodeHealthChecks(values map[string]interface{}) (*HealthChecks, error) {
+	data, err := json.Marshal(values)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read health checks: %w", err)
 	}
@@ -1308,21 +1372,6 @@ func (c *openChoreoClient) GetEnvHealthChecks(ctx context.Context, ouID, compone
 		return nil, fmt.Errorf("failed to parse health checks: %w", err)
 	}
 	return &checks, nil
-}
-
-// healthCheckDefaults reads layer 1: the defaults in the ComponentType's
-// parameters.probes schema. It reports false when the ComponentType defines no
-// health checks.
-func healthCheckDefaults(ctSpec *gen.ComponentTypeSpec) (map[string]interface{}, bool) {
-	if ctSpec == nil || ctSpec.Parameters == nil || ctSpec.Parameters.OpenAPIV3Schema == nil {
-		return nil, false
-	}
-	probesSchema, ok := lookupMap(*ctSpec.Parameters.OpenAPIV3Schema, "properties", probesKey)
-	if !ok {
-		return nil, false
-	}
-	defaults, ok := schemaDefaults(probesSchema).(map[string]interface{})
-	return defaults, ok
 }
 
 // schemaDefaults collects the `default:` values of a schema: for an object,
