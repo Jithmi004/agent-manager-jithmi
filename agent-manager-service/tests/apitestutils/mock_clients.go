@@ -226,6 +226,11 @@ func CreateMockOpenChoreoClient() *clientmocks.OpenChoreoClientMock {
 		EnsureReleaseBindingRuntimeClassFunc: func(ctx context.Context, namespaceName, componentName, environment, desiredRuntimeClass string) error {
 			return nil
 		},
+		// No health checks by default. GET agent and catalog-agent creation read them,
+		// so every test reaching those paths gets a working default.
+		GetEnvHealthChecksFunc: func(ctx context.Context, ouID, componentName, environment string) (*client.HealthChecks, error) {
+			return nil, nil
+		},
 	}
 }
 

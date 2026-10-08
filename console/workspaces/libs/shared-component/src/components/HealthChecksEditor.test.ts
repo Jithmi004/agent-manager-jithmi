@@ -58,6 +58,18 @@ describe("toHealthChecksPayload", () => {
     expect(payload.startup?.failureThreshold).toBe(60);
   });
 
+  it("leaves out empty wait times instead of sending null", () => {
+    const form = toHealthChecksForm(DEFAULT_HEALTH_CHECKS);
+    // Cleared, then the check was turned off, so validation does not stop it.
+    form.liveness = { ...form.liveness, enabled: false, timeoutSeconds: NaN };
+
+    const payload = toHealthChecksPayload(form);
+
+    expect(payload.liveness).not.toHaveProperty("timeoutSeconds");
+    expect(payload.liveness?.periodSeconds).toBe(10);
+    expect(JSON.stringify(payload)).not.toContain("null");
+  });
+
   it("sends a set port and a trimmed path", () => {
     const form = toHealthChecksForm(DEFAULT_HEALTH_CHECKS);
     form.readiness = { ...form.readiness, type: "http", path: " /health ", port: 8000 };
@@ -97,6 +109,16 @@ describe("validateHealthChecksForm", () => {
 
     expect(validateHealthChecksForm(form).startup?.failureThreshold).toBe(
       "Allows 66 min 50s to start; the maximum is 60 min",
+    );
+  });
+
+  it("counts a timeout longer than the interval in the startup window", () => {
+    const form = toHealthChecksForm(DEFAULT_HEALTH_CHECKS);
+    // 10s + 60 x 100s = 6010s.
+    form.startup = { ...form.startup, timeoutSeconds: 100 };
+
+    expect(validateHealthChecksForm(form).startup?.failureThreshold).toBe(
+      "Allows 100 min 10s to start; the maximum is 60 min",
     );
   });
 

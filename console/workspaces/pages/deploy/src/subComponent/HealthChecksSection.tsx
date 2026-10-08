@@ -28,7 +28,10 @@ import type {
 // Bounds match the AgentProbeTimings schema in agent-manager-service.
 const MAX_SECONDS = 3600;
 const MAX_FAILURE_THRESHOLD = 1000;
-/** Longest the startup check may wait: initial delay + interval x failures allowed. */
+/**
+ * Longest the startup check may wait: initial delay + failures allowed x the longer of
+ * interval and timeout (an attempt that times out takes its full timeout).
+ */
 const MAX_STARTUP_WINDOW_SECONDS = 3600;
 
 const HEALTH_CHECK_NAMES: HealthCheckName[] = ["startup", "readiness", "liveness"];
@@ -103,7 +106,8 @@ export function changedTimings(
   const changed: HealthCheckTimings = {};
   for (const name of HEALTH_CHECK_NAMES) {
     for (const { field } of TIMING_FIELDS) {
-      if (form[name][field] !== initial[name][field]) {
+      // Object.is so that two empty (NaN) values count as unchanged.
+      if (!Object.is(form[name][field], initial[name][field])) {
         changed[name] = { ...changed[name], [field]: form[name][field] };
       }
     }
@@ -125,7 +129,8 @@ export function validateTimings(form: TimingsForm, checks: HealthChecks): Timing
     }
     if (name === "startup" && Object.keys(checkErrors).length === 0) {
       const window =
-        timings.initialDelaySeconds + timings.periodSeconds * timings.failureThreshold;
+        timings.initialDelaySeconds +
+        timings.failureThreshold * Math.max(timings.periodSeconds, timings.timeoutSeconds);
       if (window > MAX_STARTUP_WINDOW_SECONDS) {
         checkErrors.failureThreshold =
           `Allows ${formatDuration(window)} to start; ` +
@@ -137,6 +142,7 @@ export function validateTimings(form: TimingsForm, checks: HealthChecks): Timing
   return errors;
 }
 
+/** Formats seconds for messages, e.g. 410 as "6 min 50s". */
 function formatDuration(totalSeconds: number): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;

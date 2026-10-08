@@ -36,7 +36,10 @@ import type {
 // Bounds match the AgentHealthCheck schema in agent-manager-service.
 const MAX_SECONDS = 3600;
 const MAX_FAILURE_THRESHOLD = 1000;
-/** Longest the startup check may wait: initial delay + interval x failures allowed. */
+/**
+ * Longest the startup check may wait: initial delay + failures allowed x the longer of
+ * interval and timeout (an attempt that times out takes its full timeout).
+ */
 const MAX_STARTUP_WINDOW_SECONDS = 3600;
 
 const HEALTH_CHECK_NAMES: HealthCheckName[] = ["startup", "readiness", "liveness"];
@@ -151,16 +154,19 @@ export function toHealthChecksForm(checks: HealthChecks): HealthChecksFormValues
   return form;
 }
 
-/** Turns the editor's values into the request's healthChecks. */
+/**
+ * Turns the editor's values into the request's healthChecks. Empty number fields
+ * (NaN) are left out, so they use the agent's port or the platform default.
+ */
 export function toHealthChecksPayload(form: HealthChecksFormValues): HealthChecks {
   const checks: HealthChecks = {};
   for (const name of HEALTH_CHECK_NAMES) {
-    const { port, path, ...rest } = form[name];
-    checks[name] = {
-      ...rest,
-      path: path.trim(),
-      ...(Number.isNaN(port) ? {} : { port }),
-    };
+    const { enabled, type, path, port, ...timings } = form[name];
+    checks[name] = { enabled, type, path: path.trim() };
+    if (!Number.isNaN(port)) checks[name].port = port;
+    for (const { field } of TIMING_FIELDS) {
+      if (!Number.isNaN(timings[field])) checks[name][field] = timings[field];
+    }
   }
   return checks;
 }
@@ -186,7 +192,9 @@ export function validateHealthChecksForm(form: HealthChecksFormValues): HealthCh
       else if (value < min || value > max) checkErrors[field] = `Must be between ${min} and ${max}`;
     }
     if (name === "startup" && TIMING_FIELDS.every(({ field }) => !checkErrors[field])) {
-      const window = check.initialDelaySeconds + check.periodSeconds * check.failureThreshold;
+      const window =
+        check.initialDelaySeconds +
+        check.failureThreshold * Math.max(check.periodSeconds, check.timeoutSeconds);
       if (window > MAX_STARTUP_WINDOW_SECONDS) {
         checkErrors.failureThreshold =
           `Allows ${formatDuration(window)} to start; ` +
@@ -198,10 +206,12 @@ export function validateHealthChecksForm(form: HealthChecksFormValues): HealthCh
   return errors;
 }
 
+/** Whether value is a whole number from min to max, inclusive. */
 function isWholeNumberBetween(value: number, min: number, max: number): boolean {
   return Number.isInteger(value) && value >= min && value <= max;
 }
 
+/** Formats seconds for messages, e.g. 410 as "6 min 50s". */
 function formatDuration(totalSeconds: number): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
@@ -209,10 +219,12 @@ function formatDuration(totalSeconds: number): string {
   return seconds === 0 ? `${minutes} min` : `${minutes} min ${seconds}s`;
 }
 
+/** Reads a number field: an empty field becomes NaN. */
 function toNumber(raw: string): number {
   return raw === "" ? NaN : Number(raw);
 }
 
+/** Shows a number field's value: NaN shows as empty. */
 function numberValue(value: number): number | string {
   return Number.isNaN(value) ? "" : value;
 }

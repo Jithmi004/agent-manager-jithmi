@@ -68,6 +68,7 @@ func healthCheckConfigClient(inEffect func() (*client.HealthChecks, error)) *cli
 	}
 }
 
+// healthCheckTestService is an agent service on oc, with no AgentID env vars to inject.
 func healthCheckTestService(oc *clientmocks.OpenChoreoClientMock) *agentManagerService {
 	injector := &agentIdentityInjectorStub{
 		EnvVarsForEnvironmentFunc: func(context.Context, string, string, string, string) ([]client.EnvVar, error) {
@@ -77,6 +78,7 @@ func healthCheckTestService(oc *clientmocks.OpenChoreoClientMock) *agentManagerS
 	return &agentManagerService{ocClient: oc, agentIdentityInjection: injector, logger: discardLogger()}
 }
 
+// updateWaitTimes sends timings as the "dev" environment's wait times.
 func updateWaitTimes(t *testing.T, s *agentManagerService, timings *spec.AgentHealthCheckTimings) error {
 	t.Helper()
 	return s.UpdateAgentConfigurations(tierGrantedCtx(t), "acme", "proj1", "my-agent",
@@ -134,6 +136,19 @@ func TestUpdateAgentConfigurations_RejectsInvalidHealthCheckWaitTimes(t *testing
 			assert.Empty(t, oc.ReplaceReleaseBindingWorkloadOverridesCalls(), "nothing is saved")
 		})
 	}
+}
+
+func TestUpdateAgentConfigurations_EmptyHealthCheckWaitTimesAreNotSaved(t *testing.T) {
+	// An empty probes object asks for nothing, so it must not reach the binding
+	// write (which would restart the agent).
+	oc := healthCheckConfigClient(func() (*client.HealthChecks, error) { return healthChecksInEffect(), nil })
+
+	err := updateWaitTimes(t, healthCheckTestService(oc), &spec.AgentHealthCheckTimings{Startup: &spec.AgentProbeTimings{}})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, utils.ErrInvalidInput, "a request with nothing in it is the caller's mistake")
+	assert.Empty(t, oc.GetEnvHealthChecksCalls(), "an empty probes object is treated as not sent")
+	assert.Empty(t, oc.ReplaceReleaseBindingWorkloadOverridesCalls())
 }
 
 func TestUpdateAgentConfigurations_RejectsWaitTimesForAgentWithoutHealthChecks(t *testing.T) {

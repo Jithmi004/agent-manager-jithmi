@@ -25,6 +25,7 @@ import (
 	"github.com/wso2/agent-manager/agent-manager-service/spec"
 )
 
+// healthCheckInt32 returns a pointer to v.
 func healthCheckInt32(v int32) *int32 { return &v }
 
 // startupInEffect is a startup check as an environment runs it: the default 10s + 5s x 60 window.
@@ -88,6 +89,13 @@ func TestValidateHealthCheckTimings(t *testing.T) {
 			wantErr: "startup check would wait up to 4810 seconds",
 		},
 		{
+			// Each attempt takes the longer of interval and timeout: 10s + 80 x 100s = 8010s.
+			name:    "startup window counts a timeout longer than the interval",
+			timings: &spec.AgentHealthCheckTimings{Startup: &spec.AgentProbeTimings{TimeoutSeconds: healthCheckInt32(100), FailureThreshold: healthCheckInt32(80)}},
+			current: startupInEffect(),
+			wantErr: "startup check would wait up to 8010 seconds",
+		},
+		{
 			name:    "startup window is not checked for a startup check that is off",
 			timings: &spec.AgentHealthCheckTimings{Startup: &spec.AgentProbeTimings{PeriodSeconds: healthCheckInt32(60), FailureThreshold: healthCheckInt32(80)}},
 			current: &spec.AgentHealthChecks{Startup: &spec.AgentHealthCheck{Enabled: spec.PtrBool(false)}},
@@ -142,6 +150,29 @@ func TestValidateHealthChecks(t *testing.T) {
 			name:    "wait time out of range",
 			checks:  &spec.AgentHealthChecks{Startup: &spec.AgentHealthCheck{TimeoutSeconds: healthCheckInt32(0)}},
 			wantErr: "startup timeoutSeconds must be between 1 and 3600",
+		},
+		{
+			// With the defaults (10s delay, 60 failures) this would be 10s + 3600s x 60.
+			name:    "startup window fields sent only in part",
+			checks:  &spec.AgentHealthChecks{Startup: &spec.AgentHealthCheck{PeriodSeconds: healthCheckInt32(3600)}},
+			wantErr: "startup initialDelaySeconds, periodSeconds and failureThreshold must be set together",
+		},
+		{
+			name:   "startup window fields may be left out of a startup check that is off",
+			checks: &spec.AgentHealthChecks{Startup: &spec.AgentHealthCheck{Enabled: spec.PtrBool(false), PeriodSeconds: healthCheckInt32(3600)}},
+		},
+		{
+			name:   "startup window fields all left out use the defaults",
+			checks: &spec.AgentHealthChecks{Startup: &spec.AgentHealthCheck{Type: str("http"), Path: str("/ready")}},
+		},
+		{
+			// 10s + 60 x 100s (the timeout, longer than the 5s interval) = 6010s.
+			name: "startup window over an hour because of a long timeout",
+			checks: &spec.AgentHealthChecks{Startup: &spec.AgentHealthCheck{
+				InitialDelaySeconds: healthCheckInt32(10), PeriodSeconds: healthCheckInt32(5),
+				TimeoutSeconds: healthCheckInt32(100), FailureThreshold: healthCheckInt32(60),
+			}},
+			wantErr: "startup check would wait up to 6010 seconds",
 		},
 		{
 			// 10s + 10s x 400 = 4010s.

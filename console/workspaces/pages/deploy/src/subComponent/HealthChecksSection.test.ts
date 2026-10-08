@@ -43,6 +43,17 @@ describe("changedTimings", () => {
     expect(changedTimings(form, toTimingsForm(inEffect))).toBeUndefined();
   });
 
+  it("does not count a wait time that is missing on both sides as changed", () => {
+    const withoutTimeout: HealthChecks = {
+      ...inEffect,
+      startup: { ...inEffect.startup, timeoutSeconds: undefined },
+    };
+
+    expect(
+      changedTimings(toTimingsForm(withoutTimeout), toTimingsForm(withoutTimeout)),
+    ).toBeUndefined();
+  });
+
   it("sends only the wait times the user changed", () => {
     const initial = toTimingsForm(inEffect);
     const form = { ...initial, readiness: { ...initial.readiness, periodSeconds: 10 } };
@@ -69,6 +80,16 @@ describe("validateTimings", () => {
     const form = toTimingsForm(inEffect);
     // 10s + 60s x 80 = 4810s.
     form.startup = { ...form.startup, periodSeconds: 60 };
+
+    expect(validateTimings(form, inEffect).startup?.failureThreshold).toContain(
+      "the maximum is 60 min",
+    );
+  });
+
+  it("counts a timeout longer than the interval in the startup window", () => {
+    const form = toTimingsForm(inEffect);
+    // 10s + 80 x 100s = 8010s.
+    form.startup = { ...form.startup, timeoutSeconds: 100 };
 
     expect(validateTimings(form, inEffect).startup?.failureThreshold).toContain(
       "the maximum is 60 min",
