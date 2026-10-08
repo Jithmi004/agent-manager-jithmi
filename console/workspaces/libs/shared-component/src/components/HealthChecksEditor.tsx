@@ -41,6 +41,41 @@ const MAX_STARTUP_WINDOW_SECONDS = 3600;
 
 const HEALTH_CHECK_NAMES: HealthCheckName[] = ["startup", "readiness", "liveness"];
 
+/**
+ * The health checks a new agent starts with in the create wizard. A copy of the
+ * defaults in agent-api.yaml (parameters.probes); keep the two in step. The wizard
+ * sends health checks only when the user changes them.
+ */
+export const DEFAULT_HEALTH_CHECKS: HealthChecks = {
+  startup: {
+    enabled: true,
+    type: "tcp",
+    path: "/health",
+    initialDelaySeconds: 10,
+    periodSeconds: 5,
+    timeoutSeconds: 1,
+    failureThreshold: 60,
+  },
+  readiness: {
+    enabled: true,
+    type: "tcp",
+    path: "/health",
+    initialDelaySeconds: 0,
+    periodSeconds: 5,
+    timeoutSeconds: 1,
+    failureThreshold: 6,
+  },
+  liveness: {
+    enabled: false,
+    type: "tcp",
+    path: "/health",
+    initialDelaySeconds: 0,
+    periodSeconds: 10,
+    timeoutSeconds: 1,
+    failureThreshold: 3,
+  },
+};
+
 const CHECK_TITLES: Record<HealthCheckName, string> = {
   startup: "Startup check",
   readiness: "Readiness check",
