@@ -43,6 +43,17 @@ describe("changedTimings", () => {
     expect(changedTimings(form, toTimingsForm(inEffect))).toBeUndefined();
   });
 
+  it("does not count a wait time that is missing on both sides as changed", () => {
+    const withoutTimeout: HealthChecks = {
+      ...inEffect,
+      startup: { ...inEffect.startup, timeoutSeconds: undefined },
+    };
+
+    expect(
+      changedTimings(toTimingsForm(withoutTimeout), toTimingsForm(withoutTimeout)),
+    ).toBeUndefined();
+  });
+
   it("sends only the wait times the user changed", () => {
     const initial = toTimingsForm(inEffect);
     const form = { ...initial, readiness: { ...initial.readiness, periodSeconds: 10 } };

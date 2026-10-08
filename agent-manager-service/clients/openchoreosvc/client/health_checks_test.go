@@ -107,6 +107,7 @@ func TestMergeEnvProbeTimings_NothingSent(t *testing.T) {
 	rb := &gen.ReleaseBinding{Spec: &gen.ReleaseBindingSpec{}}
 
 	mergeEnvProbeTimings(rb, nil)
+	mergeEnvProbeTimings(rb, m{})
 
 	assert.Nil(t, rb.Spec.ComponentTypeEnvironmentConfigs)
 }

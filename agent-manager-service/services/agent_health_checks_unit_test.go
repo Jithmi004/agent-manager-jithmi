@@ -136,6 +136,19 @@ func TestUpdateAgentConfigurations_RejectsInvalidHealthCheckWaitTimes(t *testing
 	}
 }
 
+func TestUpdateAgentConfigurations_EmptyHealthCheckWaitTimesAreNotSaved(t *testing.T) {
+	// An empty probes object asks for nothing, so it must not reach the binding
+	// write (which would restart the agent).
+	oc := healthCheckConfigClient(func() (*client.HealthChecks, error) { return healthChecksInEffect(), nil })
+
+	err := updateWaitTimes(t, healthCheckTestService(oc), &spec.AgentHealthCheckTimings{Startup: &spec.AgentProbeTimings{}})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, utils.ErrInvalidInput, "a request with nothing in it is the caller's mistake")
+	assert.Empty(t, oc.GetEnvHealthChecksCalls(), "an empty probes object is treated as not sent")
+	assert.Empty(t, oc.ReplaceReleaseBindingWorkloadOverridesCalls())
+}
+
 func TestUpdateAgentConfigurations_RejectsWaitTimesForAgentWithoutHealthChecks(t *testing.T) {
 	// The agent's ComponentType defines no health checks, as for an external agent.
 	oc := healthCheckConfigClient(func() (*client.HealthChecks, error) {

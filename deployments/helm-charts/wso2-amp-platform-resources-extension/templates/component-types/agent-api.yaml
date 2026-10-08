@@ -76,8 +76,9 @@ spec:
         # the same in every environment. Each check's `port` defaults to the agent's
         # endpoint port. The wait times here are the baseline; an environment may
         # override them (environmentConfigs.probes). Defaults reproduce the fixed probes
-        # agents had before this was configurable and must match defaultHealthChecks in
-        # agent-manager-service, which a unit test enforces.
+        # agents had before this was configurable. agent-manager-service reads them from
+        # here; the Console's create wizard keeps a copy (DEFAULT_HEALTH_CHECKS) as the
+        # form's starting values.
         probes:
           type: object
           default: {}

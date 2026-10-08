@@ -1434,7 +1434,7 @@ func mergeMaps(base, override map[string]interface{}) map[string]interface{} {
 // (componentTypeEnvironmentConfigs.probes). Only the fields sent change; the
 // environment keeps any other wait time it already overrides.
 func mergeEnvProbeTimings(rb *gen.ReleaseBinding, sent map[string]interface{}) {
-	if sent == nil {
+	if len(sent) == 0 {
 		return
 	}
 	if rb.Spec.ComponentTypeEnvironmentConfigs == nil {

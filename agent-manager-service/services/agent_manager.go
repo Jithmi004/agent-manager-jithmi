@@ -5155,9 +5155,10 @@ func (s *agentManagerService) UpdateAgentConfigurations(ctx context.Context, ouI
 
 	// Health check wait times are checked against the values in effect, so the
 	// startup check stays within its limit. An agent with none in effect (an
-	// external agent, say) has no health checks to change.
+	// external agent, say) has no health checks to change. A probes object with
+	// no wait times in it is treated as not sent, so it does not restart the agent.
 	var probeTimings *client.HealthCheckTimings
-	if req.Probes != nil {
+	if hasHealthCheckTimings(req.Probes) {
 		current, err := s.ocClient.GetEnvHealthChecks(ctx, ouID, agentName, req.EnvironmentName)
 		if err != nil {
 			return fmt.Errorf("failed to get agent health checks: %w", err)
@@ -6144,6 +6145,20 @@ func convertClientHealthChecksToSpec(h *client.HealthChecks) *spec.AgentHealthCh
 		Readiness: convert(h.Readiness),
 		Liveness:  convert(h.Liveness),
 	}
+}
+
+// hasHealthCheckTimings reports whether any wait time is set.
+func hasHealthCheckTimings(t *spec.AgentHealthCheckTimings) bool {
+	if t == nil {
+		return false
+	}
+	for _, p := range []*spec.AgentProbeTimings{t.Startup, t.Readiness, t.Liveness} {
+		if p != nil && (p.InitialDelaySeconds != nil || p.PeriodSeconds != nil ||
+			p.TimeoutSeconds != nil || p.FailureThreshold != nil) {
+			return true
+		}
+	}
+	return false
 }
 
 // convertSpecTimingsToClient maps the API's wait times to the client's type.

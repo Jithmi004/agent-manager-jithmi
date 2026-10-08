@@ -103,7 +103,8 @@ export function changedTimings(
   const changed: HealthCheckTimings = {};
   for (const name of HEALTH_CHECK_NAMES) {
     for (const { field } of TIMING_FIELDS) {
-      if (form[name][field] !== initial[name][field]) {
+      // Object.is so that two empty (NaN) values count as unchanged.
+      if (!Object.is(form[name][field], initial[name][field])) {
         changed[name] = { ...changed[name], [field]: form[name][field] };
       }
     }
