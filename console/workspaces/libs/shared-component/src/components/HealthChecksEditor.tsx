@@ -154,16 +154,19 @@ export function toHealthChecksForm(checks: HealthChecks): HealthChecksFormValues
   return form;
 }
 
-/** Turns the editor's values into the request's healthChecks. */
+/**
+ * Turns the editor's values into the request's healthChecks. Empty number fields
+ * (NaN) are left out, so they use the agent's port or the platform default.
+ */
 export function toHealthChecksPayload(form: HealthChecksFormValues): HealthChecks {
   const checks: HealthChecks = {};
   for (const name of HEALTH_CHECK_NAMES) {
-    const { port, path, ...rest } = form[name];
-    checks[name] = {
-      ...rest,
-      path: path.trim(),
-      ...(Number.isNaN(port) ? {} : { port }),
-    };
+    const { enabled, type, path, port, ...timings } = form[name];
+    checks[name] = { enabled, type, path: path.trim() };
+    if (!Number.isNaN(port)) checks[name].port = port;
+    for (const { field } of TIMING_FIELDS) {
+      if (!Number.isNaN(timings[field])) checks[name][field] = timings[field];
+    }
   }
   return checks;
 }

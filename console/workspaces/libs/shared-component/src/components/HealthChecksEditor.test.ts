@@ -58,6 +58,18 @@ describe("toHealthChecksPayload", () => {
     expect(payload.startup?.failureThreshold).toBe(60);
   });
 
+  it("leaves out empty wait times instead of sending null", () => {
+    const form = toHealthChecksForm(DEFAULT_HEALTH_CHECKS);
+    // Cleared, then the check was turned off, so validation does not stop it.
+    form.liveness = { ...form.liveness, enabled: false, timeoutSeconds: NaN };
+
+    const payload = toHealthChecksPayload(form);
+
+    expect(payload.liveness).not.toHaveProperty("timeoutSeconds");
+    expect(payload.liveness?.periodSeconds).toBe(10);
+    expect(JSON.stringify(payload)).not.toContain("null");
+  });
+
   it("sends a set port and a trimmed path", () => {
     const form = toHealthChecksForm(DEFAULT_HEALTH_CHECKS);
     form.readiness = { ...form.readiness, type: "http", path: " /health ", port: 8000 };
