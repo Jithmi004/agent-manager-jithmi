@@ -219,6 +219,20 @@ func (c *openChoreoClient) retryReleaseBindingUpdate(
 	namespaceName, bindingName string,
 	mutate func(*gen.ReleaseBinding),
 ) error {
+	return c.retryReleaseBindingUpdateChecked(ctx, namespaceName, bindingName, func(rb *gen.ReleaseBinding) error {
+		mutate(rb)
+		return nil
+	})
+}
+
+// retryReleaseBindingUpdateChecked is retryReleaseBindingUpdate for a mutate that can
+// refuse the change: an error from mutate stops the update and is returned. mutate
+// runs on every freshly read binding, so a check inside it covers concurrent writes.
+func (c *openChoreoClient) retryReleaseBindingUpdateChecked(
+	ctx context.Context,
+	namespaceName, bindingName string,
+	mutate func(*gen.ReleaseBinding) error,
+) error {
 	const maxRetries = 3
 	var lastErr error
 	for attempt := 1; attempt <= maxRetries; attempt++ {
@@ -240,7 +254,9 @@ func (c *openChoreoClient) retryReleaseBindingUpdate(
 
 		binding := getResp.JSON200
 		before, beforeErr := json.Marshal(binding.Spec)
-		mutate(binding)
+		if err := mutate(binding); err != nil {
+			return err
+		}
 		if after, afterErr := json.Marshal(binding.Spec); beforeErr == nil && afterErr == nil && bytes.Equal(before, after) {
 			return nil // mutate changed nothing; skip the no-op write
 		}
@@ -498,7 +514,7 @@ func (c *openChoreoClient) ReplaceReleaseBindingWorkloadOverrides(ctx context.Co
 		return fmt.Errorf("failed to read health check wait times: %w", err)
 	}
 
-	return c.retryReleaseBindingUpdate(ctx, namespaceName, binding.Metadata.Name, func(rb *gen.ReleaseBinding) {
+	return c.retryReleaseBindingUpdateChecked(ctx, namespaceName, binding.Metadata.Name, func(rb *gen.ReleaseBinding) error {
 		container := &gen.ContainerOverride{}
 		if envOverrides != nil {
 			envVars := toGenEnvVars(envOverrides)
@@ -513,9 +529,21 @@ func (c *openChoreoClient) ReplaceReleaseBindingWorkloadOverrides(ctx context.Co
 			container.Files = rb.Spec.WorkloadOverrides.Container.Files
 		}
 		rb.Spec.WorkloadOverrides = &gen.WorkloadOverrides{Container: container}
-		mergeEnvProbeTimings(rb, probeOverrides)
+		if len(probeOverrides) > 0 {
+			mergeEnvProbeTimings(rb, probeOverrides)
+			// Checked on the binding as it is about to be saved, so wait times saved
+			// concurrently by someone else cannot combine past the limit.
+			checks, err := c.bindingHealthChecks(ctx, namespaceName, rb)
+			if err != nil {
+				return err
+			}
+			if err := checkStartupWindow(checks); err != nil {
+				return err
+			}
+		}
 
 		bumpRestartedAt(rb)
+		return nil
 	})
 }
 

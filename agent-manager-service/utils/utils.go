@@ -1044,7 +1044,8 @@ func ValidateFileMounts(files []spec.FileMount) error {
 }
 
 // MaxStartupWindowSeconds caps how long the startup check may wait for a
-// starting agent: initial delay + interval × failures allowed.
+// starting agent: initial delay + failures allowed × the longer of interval and
+// timeout (an attempt that times out takes its full timeout).
 const MaxStartupWindowSeconds = 3600
 
 // ValidateHealthCheckTimings checks the wait times sent for one environment:
@@ -1078,9 +1079,10 @@ func ValidateHealthCheckTimings(timings *spec.AgentHealthCheckTimings, current *
 	}
 	initialDelay := int32ValueOr(sent.InitialDelaySeconds, inEffect.InitialDelaySeconds)
 	period := int32ValueOr(sent.PeriodSeconds, inEffect.PeriodSeconds)
+	timeout := int32ValueOr(sent.TimeoutSeconds, inEffect.TimeoutSeconds)
 	failures := int32ValueOr(sent.FailureThreshold, inEffect.FailureThreshold)
-	if window := initialDelay + period*failures; window > MaxStartupWindowSeconds {
-		return fmt.Errorf("startup check would wait up to %d seconds (initial delay + interval × failures allowed); the maximum is %d",
+	if window := initialDelay + failures*max(period, timeout); window > MaxStartupWindowSeconds {
+		return fmt.Errorf("startup check would wait up to %d seconds (initial delay + failures allowed × the longer of interval and timeout); the maximum is %d",
 			window, MaxStartupWindowSeconds)
 	}
 	return nil
@@ -1146,6 +1148,19 @@ func ValidateHealthChecks(checks *spec.AgentHealthChecks) error {
 		}
 		if p := c.check.Path; p != nil && !strings.HasPrefix(*p, "/") {
 			return fmt.Errorf("%s path must start with /", c.name)
+		}
+	}
+	// A field left out uses the platform default, which this check cannot see, so a
+	// startup window mixing sent values with defaults could not be checked here.
+	if s := checks.Startup; s != nil && (s.Enabled == nil || *s.Enabled) {
+		set := 0
+		for _, v := range []*int32{s.InitialDelaySeconds, s.PeriodSeconds, s.FailureThreshold} {
+			if v != nil {
+				set++
+			}
+		}
+		if set > 0 && set < 3 {
+			return fmt.Errorf("startup initialDelaySeconds, periodSeconds and failureThreshold must be set together")
 		}
 	}
 	timings := &spec.AgentHealthCheckTimings{

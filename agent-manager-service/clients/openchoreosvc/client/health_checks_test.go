@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/wso2/agent-manager/agent-manager-service/clients/openchoreosvc/gen"
+	"github.com/wso2/agent-manager/agent-manager-service/utils"
 )
 
 type m = map[string]interface{}
@@ -242,4 +243,67 @@ func TestGetEnvHealthChecks_NothingDeployedInTheEnvironment(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Nil(t, checks)
+}
+
+// concurrentWaitTimeAPI is healthCheckAPI whose "dev" binding, when read for the update,
+// already holds a startup interval of 6 that someone else saved. writes records each
+// binding the update sends.
+func concurrentWaitTimeAPI(t *testing.T, writes *[]gen.ReleaseBinding) http.Handler {
+	t.Helper()
+	base := healthCheckAPI(t, "dev")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/namespaces/default/releasebindings/my-agent-dev" {
+			base.ServeHTTP(w, r)
+			return
+		}
+		if r.Method == http.MethodPut {
+			var sent gen.ReleaseBinding
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&sent))
+			*writes = append(*writes, sent)
+			require.NoError(t, json.NewEncoder(w).Encode(sent))
+			return
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(m{
+			"metadata": m{"name": "my-agent-dev"},
+			"spec": m{
+				"environment":                     "dev",
+				"releaseName":                     "my-agent-r1",
+				"owner":                           m{"componentName": "my-agent", "projectName": "proj"},
+				"componentTypeEnvironmentConfigs": m{probesKey: m{"startup": m{"periodSeconds": 6}}},
+			},
+		}))
+	})
+}
+
+func TestReplaceReleaseBindingWorkloadOverrides_ChecksTheStartupWindowOnTheSavedState(t *testing.T) {
+	failures := func(v int32) *HealthCheckTimings {
+		return &HealthCheckTimings{Startup: &ProbeTimings{FailureThreshold: &v}}
+	}
+
+	t.Run("refuses wait times that only exceed the limit combined with a concurrent change", func(t *testing.T) {
+		var writes []gen.ReleaseBinding
+		c := newTestClient(t, concurrentWaitTimeAPI(t, &writes))
+
+		// 10s + 700 x 6s (the interval saved concurrently) = 4210s.
+		err := c.ReplaceReleaseBindingWorkloadOverrides(context.Background(), "acme", "my-agent", "dev", nil, nil, failures(700))
+
+		require.Error(t, err)
+		assert.ErrorIs(t, err, utils.ErrInvalidInput)
+		assert.Contains(t, err.Error(), "4210 seconds")
+		assert.Empty(t, writes, "nothing is saved")
+	})
+
+	t.Run("saves wait times that stay within the limit combined with a concurrent change", func(t *testing.T) {
+		var writes []gen.ReleaseBinding
+		c := newTestClient(t, concurrentWaitTimeAPI(t, &writes))
+
+		// 10s + 80 x 6s = 490s.
+		err := c.ReplaceReleaseBindingWorkloadOverrides(context.Background(), "acme", "my-agent", "dev", nil, nil, failures(80))
+
+		require.NoError(t, err)
+		require.Len(t, writes, 1)
+		saved := (*writes[0].Spec.ComponentTypeEnvironmentConfigs)[probesKey]
+		assert.Equal(t, m{"startup": m{"periodSeconds": float64(6), "failureThreshold": float64(80)}}, saved,
+			"the concurrent change is kept alongside ours")
+	})
 }

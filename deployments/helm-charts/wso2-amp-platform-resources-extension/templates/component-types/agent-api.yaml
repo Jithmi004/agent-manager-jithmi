@@ -32,6 +32,20 @@ spec:
   validations:
     - rule: "${size(workload.endpoints) > 0}"
       message: "Agent API components must have at least one endpoint."
+    # The startup check may keep a starting agent for at most an hour. Checked on the
+    # values the probe is rendered from (defaults, the agent's own, the environment's),
+    # so it also covers combinations no single API request could see. Each attempt
+    # takes the longer of the interval and the timeout.
+    - rule: >-
+        ${!parameters.probes.startup.enabled ||
+          environmentConfigs.probes.startup.?initialDelaySeconds.orValue(parameters.probes.startup.initialDelaySeconds) +
+          environmentConfigs.probes.startup.?failureThreshold.orValue(parameters.probes.startup.failureThreshold) *
+          (environmentConfigs.probes.startup.?periodSeconds.orValue(parameters.probes.startup.periodSeconds) >
+            environmentConfigs.probes.startup.?timeoutSeconds.orValue(parameters.probes.startup.timeoutSeconds)
+            ? environmentConfigs.probes.startup.?periodSeconds.orValue(parameters.probes.startup.periodSeconds)
+            : environmentConfigs.probes.startup.?timeoutSeconds.orValue(parameters.probes.startup.timeoutSeconds))
+          <= 3600}
+      message: "The startup check may wait at most 3600 seconds (initial delay + failures allowed × the longer of interval and timeout)."
 
   # Baselines set at component creation time.
   parameters:

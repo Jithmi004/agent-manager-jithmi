@@ -36,7 +36,10 @@ import type {
 // Bounds match the AgentHealthCheck schema in agent-manager-service.
 const MAX_SECONDS = 3600;
 const MAX_FAILURE_THRESHOLD = 1000;
-/** Longest the startup check may wait: initial delay + interval x failures allowed. */
+/**
+ * Longest the startup check may wait: initial delay + failures allowed x the longer of
+ * interval and timeout (an attempt that times out takes its full timeout).
+ */
 const MAX_STARTUP_WINDOW_SECONDS = 3600;
 
 const HEALTH_CHECK_NAMES: HealthCheckName[] = ["startup", "readiness", "liveness"];
@@ -186,7 +189,9 @@ export function validateHealthChecksForm(form: HealthChecksFormValues): HealthCh
       else if (value < min || value > max) checkErrors[field] = `Must be between ${min} and ${max}`;
     }
     if (name === "startup" && TIMING_FIELDS.every(({ field }) => !checkErrors[field])) {
-      const window = check.initialDelaySeconds + check.periodSeconds * check.failureThreshold;
+      const window =
+        check.initialDelaySeconds +
+        check.failureThreshold * Math.max(check.periodSeconds, check.timeoutSeconds);
       if (window > MAX_STARTUP_WINDOW_SECONDS) {
         checkErrors.failureThreshold =
           `Allows ${formatDuration(window)} to start; ` +
@@ -198,10 +203,12 @@ export function validateHealthChecksForm(form: HealthChecksFormValues): HealthCh
   return errors;
 }
 
+/** Whether value is a whole number from min to max, inclusive. */
 function isWholeNumberBetween(value: number, min: number, max: number): boolean {
   return Number.isInteger(value) && value >= min && value <= max;
 }
 
+/** Formats seconds for messages, e.g. 410 as "6 min 50s". */
 function formatDuration(totalSeconds: number): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
@@ -209,10 +216,12 @@ function formatDuration(totalSeconds: number): string {
   return seconds === 0 ? `${minutes} min` : `${minutes} min ${seconds}s`;
 }
 
+/** Reads a number field: an empty field becomes NaN. */
 function toNumber(raw: string): number {
   return raw === "" ? NaN : Number(raw);
 }
 
+/** Shows a number field's value: NaN shows as empty. */
 function numberValue(value: number): number | string {
   return Number.isNaN(value) ? "" : value;
 }

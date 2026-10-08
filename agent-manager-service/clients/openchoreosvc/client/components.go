@@ -1269,6 +1269,13 @@ func (c *openChoreoClient) GetEnvHealthChecks(ctx context.Context, ouID, compone
 	if err != nil {
 		return nil, err
 	}
+	return c.bindingHealthChecks(ctx, namespaceName, binding)
+}
+
+// bindingHealthChecks returns the health checks an environment's binding renders: those
+// of the release it runs, with the binding's own wait times on top. nil when nothing is
+// deployed yet or the release's ComponentType defines no health checks.
+func (c *openChoreoClient) bindingHealthChecks(ctx context.Context, namespaceName string, binding *gen.ReleaseBinding) (*HealthChecks, error) {
 	if binding == nil || binding.Spec == nil || binding.Spec.ReleaseName == nil || *binding.Spec.ReleaseName == "" {
 		return nil, nil //nolint:nilnil // nothing is deployed in the environment yet
 	}
@@ -1461,6 +1468,28 @@ func setEnvProbes(spec *gen.ReleaseBindingSpec, probes map[string]interface{}) {
 		return
 	}
 	(*spec.ComponentTypeEnvironmentConfigs)[probesKey] = probes
+}
+
+// checkStartupWindow rejects health checks whose startup check could keep a starting
+// agent longer than utils.MaxStartupWindowSeconds: initial delay + failures allowed ×
+// the longer of interval and timeout.
+func checkStartupWindow(checks *HealthChecks) error {
+	if checks == nil || checks.Startup == nil || checks.Startup.Enabled == nil || !*checks.Startup.Enabled {
+		return nil
+	}
+	value := func(v *int32) int32 {
+		if v == nil {
+			return 0
+		}
+		return *v
+	}
+	s := checks.Startup
+	window := value(s.InitialDelaySeconds) + value(s.FailureThreshold)*max(value(s.PeriodSeconds), value(s.TimeoutSeconds))
+	if window > utils.MaxStartupWindowSeconds {
+		return fmt.Errorf("%w: startup check would wait up to %d seconds (initial delay + failures allowed × the longer of interval and timeout); the maximum is %d",
+			utils.ErrInvalidInput, window, utils.MaxStartupWindowSeconds)
+	}
+	return nil
 }
 
 func (c *openChoreoClient) DeleteComponent(ctx context.Context, ouID, projectName, componentName string) error {

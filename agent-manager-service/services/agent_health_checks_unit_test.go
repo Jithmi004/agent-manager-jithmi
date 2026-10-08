@@ -68,6 +68,7 @@ func healthCheckConfigClient(inEffect func() (*client.HealthChecks, error)) *cli
 	}
 }
 
+// healthCheckTestService is an agent service on oc, with no AgentID env vars to inject.
 func healthCheckTestService(oc *clientmocks.OpenChoreoClientMock) *agentManagerService {
 	injector := &agentIdentityInjectorStub{
 		EnvVarsForEnvironmentFunc: func(context.Context, string, string, string, string) ([]client.EnvVar, error) {
@@ -77,6 +78,7 @@ func healthCheckTestService(oc *clientmocks.OpenChoreoClientMock) *agentManagerS
 	return &agentManagerService{ocClient: oc, agentIdentityInjection: injector, logger: discardLogger()}
 }
 
+// updateWaitTimes sends timings as the "dev" environment's wait times.
 func updateWaitTimes(t *testing.T, s *agentManagerService, timings *spec.AgentHealthCheckTimings) error {
 	t.Helper()
 	return s.UpdateAgentConfigurations(tierGrantedCtx(t), "acme", "proj1", "my-agent",

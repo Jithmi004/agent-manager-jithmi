@@ -100,6 +100,16 @@ describe("validateHealthChecksForm", () => {
     );
   });
 
+  it("counts a timeout longer than the interval in the startup window", () => {
+    const form = toHealthChecksForm(DEFAULT_HEALTH_CHECKS);
+    // 10s + 60 x 100s = 6010s.
+    form.startup = { ...form.startup, timeoutSeconds: 100 };
+
+    expect(validateHealthChecksForm(form).startup?.failureThreshold).toBe(
+      "Allows 100 min 10s to start; the maximum is 60 min",
+    );
+  });
+
   it("does not check a check that is off", () => {
     const form = toHealthChecksForm(DEFAULT_HEALTH_CHECKS);
     form.liveness = { ...form.liveness, enabled: false, periodSeconds: 0 };

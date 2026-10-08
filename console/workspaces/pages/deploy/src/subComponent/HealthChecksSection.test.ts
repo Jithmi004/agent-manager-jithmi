@@ -86,6 +86,16 @@ describe("validateTimings", () => {
     );
   });
 
+  it("counts a timeout longer than the interval in the startup window", () => {
+    const form = toTimingsForm(inEffect);
+    // 10s + 80 x 100s = 8010s.
+    form.startup = { ...form.startup, timeoutSeconds: 100 };
+
+    expect(validateTimings(form, inEffect).startup?.failureThreshold).toContain(
+      "the maximum is 60 min",
+    );
+  });
+
   it("does not check a check that is off", () => {
     const form = toTimingsForm(inEffect);
     form.liveness = { ...form.liveness, periodSeconds: 0 };
