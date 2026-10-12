@@ -29,9 +29,9 @@ type AgentHealthCheck struct {
 	FailureThreshold *int32 `json:"failureThreshold,omitempty"`
 	// Whether the check runs.
 	Enabled *bool `json:"enabled,omitempty"`
-	// tcp passes when the health port accepts a connection; http passes when a GET to path on the health port returns a 2xx or 3xx status.
+	// tcp passes when the check's port accepts a connection; http passes when a GET to path on the check's port returns a 2xx or 3xx status.
 	Type *string `json:"type,omitempty"`
-	// Port the checks run against. Defaults to the agent's port.
+	// Port this check runs against. Defaults to the agent's endpoint port.
 	Port *int32 `json:"port,omitempty"`
 	// Path requested when type is http (e.g. \"/health\").
 	Path *string `json:"path,omitempty"`

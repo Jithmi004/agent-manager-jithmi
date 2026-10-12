@@ -320,7 +320,7 @@ func (c *openChoreoClient) UpdateComponentBuildParameters(ctx context.Context, o
 		}
 	}
 
-	// Replace the build-time health checks (spec.parameters.probes) if provided.
+	// Replace the agent's health checks (spec.parameters.probes) if provided.
 	if req.HealthChecks != nil {
 		probes, err := structToMap(req.HealthChecks)
 		if err != nil {

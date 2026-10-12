@@ -5153,25 +5153,6 @@ func (s *agentManagerService) UpdateAgentConfigurations(ctx context.Context, ouI
 		return err
 	}
 
-	// Health check wait times are checked against the values in effect, so the
-	// startup check stays within its limit. An agent with none in effect (an
-	// external agent, say) has no health checks to change. A probes object with
-	// no wait times in it is treated as not sent, so it does not restart the agent.
-	var probeTimings *client.HealthCheckTimings
-	if hasHealthCheckTimings(req.Probes) {
-		current, err := s.ocClient.GetEnvHealthChecks(ctx, ouID, agentName, req.EnvironmentName)
-		if err != nil {
-			return fmt.Errorf("failed to get agent health checks: %w", err)
-		}
-		if current == nil {
-			return fmt.Errorf("%w: this agent has no health checks to configure", utils.ErrInvalidInput)
-		}
-		if err := utils.ValidateHealthCheckTimings(req.Probes, convertClientHealthChecksToSpec(current)); err != nil {
-			return fmt.Errorf("%w: %s", utils.ErrInvalidInput, err.Error())
-		}
-		probeTimings = convertSpecTimingsToClient(req.Probes)
-	}
-
 	// Fetch system-managed env vars + their keys for the target env. We must filter the user's
 	// env list to drop these before processEnvVars (which would otherwise mangle their secret
 	// key refs), then re-append the canonical system values.
@@ -5237,12 +5218,12 @@ func (s *agentManagerService) UpdateAgentConfigurations(ctx context.Context, ouI
 		}
 	}
 
-	if envOverrides == nil && fileOverrides == nil && probeTimings == nil {
+	if envOverrides == nil && fileOverrides == nil {
 		// Nothing requested — surface as a clear error rather than silently no-op'ing.
-		return fmt.Errorf("%w: request must include env, files or probes", utils.ErrInvalidInput)
+		return fmt.Errorf("%w: request must include env or files", utils.ErrInvalidInput)
 	}
 
-	if err := s.ocClient.ReplaceReleaseBindingWorkloadOverrides(ctx, ouID, agentName, req.EnvironmentName, envOverrides, fileOverrides, probeTimings); err != nil {
+	if err := s.ocClient.ReplaceReleaseBindingWorkloadOverrides(ctx, ouID, agentName, req.EnvironmentName, envOverrides, fileOverrides); err != nil {
 		s.logger.Error("Failed to replace release binding workload overrides", "agentName", agentName, "environment", req.EnvironmentName, "error", err)
 		return fmt.Errorf("failed to update agent configurations: %w", err)
 	}
@@ -6109,8 +6090,8 @@ func (s *agentManagerService) GetAgentEnvConfig(ctx context.Context, ouID, proje
 	return cfg, nil
 }
 
-// GetAgentHealthChecks returns an agent's health checks: those in effect in the
-// environment, or its build-time ones when environment is "". nil when the
+// GetAgentHealthChecks returns an agent's health checks: those of the release the
+// environment runs, or its current ones when environment is "". nil when the
 // agent's ComponentType defines none (an external agent, say).
 func (s *agentManagerService) GetAgentHealthChecks(ctx context.Context, ouID, projectName, agentName, environment string) (*spec.AgentHealthChecks, error) {
 	checks, err := s.ocClient.GetEnvHealthChecks(ctx, ouID, agentName, environment)
@@ -6144,40 +6125,6 @@ func convertClientHealthChecksToSpec(h *client.HealthChecks) *spec.AgentHealthCh
 		Startup:   convert(h.Startup),
 		Readiness: convert(h.Readiness),
 		Liveness:  convert(h.Liveness),
-	}
-}
-
-// hasHealthCheckTimings reports whether any wait time is set.
-func hasHealthCheckTimings(t *spec.AgentHealthCheckTimings) bool {
-	if t == nil {
-		return false
-	}
-	for _, p := range []*spec.AgentProbeTimings{t.Startup, t.Readiness, t.Liveness} {
-		if p != nil && (p.InitialDelaySeconds != nil || p.PeriodSeconds != nil ||
-			p.TimeoutSeconds != nil || p.FailureThreshold != nil) {
-			return true
-		}
-	}
-	return false
-}
-
-// convertSpecTimingsToClient maps the API's wait times to the client's type.
-func convertSpecTimingsToClient(t *spec.AgentHealthCheckTimings) *client.HealthCheckTimings {
-	convert := func(p *spec.AgentProbeTimings) *client.ProbeTimings {
-		if p == nil {
-			return nil
-		}
-		return &client.ProbeTimings{
-			InitialDelaySeconds: p.InitialDelaySeconds,
-			PeriodSeconds:       p.PeriodSeconds,
-			TimeoutSeconds:      p.TimeoutSeconds,
-			FailureThreshold:    p.FailureThreshold,
-		}
-	}
-	return &client.HealthCheckTimings{
-		Startup:   convert(t.Startup),
-		Readiness: convert(t.Readiness),
-		Liveness:  convert(t.Liveness),
 	}
 }
 

@@ -238,7 +238,7 @@ interface HealthChecksEditorProps {
 
 /**
  * Edits an agent's health checks: whether each one runs, what it checks (TCP or an
- * HTTP path, on a port) and its baseline wait times.
+ * HTTP path, on a port) and how long it waits.
  */
 export function HealthChecksEditor({ value, onChange, errors, disabled }: HealthChecksEditorProps) {
   const update = <K extends keyof HealthCheckFormValues>(

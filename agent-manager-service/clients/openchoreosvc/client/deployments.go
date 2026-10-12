@@ -219,20 +219,6 @@ func (c *openChoreoClient) retryReleaseBindingUpdate(
 	namespaceName, bindingName string,
 	mutate func(*gen.ReleaseBinding),
 ) error {
-	return c.retryReleaseBindingUpdateChecked(ctx, namespaceName, bindingName, func(rb *gen.ReleaseBinding) error {
-		mutate(rb)
-		return nil
-	})
-}
-
-// retryReleaseBindingUpdateChecked is retryReleaseBindingUpdate for a mutate that can
-// refuse the change: an error from mutate stops the update and is returned. mutate
-// runs on every freshly read binding, so a check inside it covers concurrent writes.
-func (c *openChoreoClient) retryReleaseBindingUpdateChecked(
-	ctx context.Context,
-	namespaceName, bindingName string,
-	mutate func(*gen.ReleaseBinding) error,
-) error {
 	const maxRetries = 3
 	var lastErr error
 	for attempt := 1; attempt <= maxRetries; attempt++ {
@@ -254,9 +240,7 @@ func (c *openChoreoClient) retryReleaseBindingUpdateChecked(
 
 		binding := getResp.JSON200
 		before, beforeErr := json.Marshal(binding.Spec)
-		if err := mutate(binding); err != nil {
-			return err
-		}
+		mutate(binding)
 		if after, afterErr := json.Marshal(binding.Spec); beforeErr == nil && afterErr == nil && bytes.Equal(before, after) {
 			return nil // mutate changed nothing; skip the no-op write
 		}
@@ -499,7 +483,7 @@ func (c *openChoreoClient) EnsureReleaseBindingRuntimeClass(ctx context.Context,
 // pod rollout — all in a single Get→mutate→Update cycle.
 // Passing nil for envOverrides or fileOverrides leaves that aspect untouched; passing an empty
 // slice clears it. Returns ErrNotFound when no binding exists yet.
-func (c *openChoreoClient) ReplaceReleaseBindingWorkloadOverrides(ctx context.Context, ouID, componentName, environment string, envOverrides []EnvVar, fileOverrides []FileVar, probeTimings *HealthCheckTimings) error {
+func (c *openChoreoClient) ReplaceReleaseBindingWorkloadOverrides(ctx context.Context, ouID, componentName, environment string, envOverrides []EnvVar, fileOverrides []FileVar) error {
 	namespaceName := c.NamespaceFor(ouID)
 	binding, err := c.findReleaseBindingForEnv(ctx, namespaceName, componentName, environment)
 	if err != nil {
@@ -508,13 +492,8 @@ func (c *openChoreoClient) ReplaceReleaseBindingWorkloadOverrides(ctx context.Co
 	if binding == nil {
 		return fmt.Errorf("no release binding found for component %q in environment %q: %w", componentName, environment, utils.ErrNotFound)
 	}
-	// Converted once here, because the update below may run more than once.
-	probeOverrides, err := structToMap(probeTimings)
-	if err != nil {
-		return fmt.Errorf("failed to read health check wait times: %w", err)
-	}
 
-	return c.retryReleaseBindingUpdateChecked(ctx, namespaceName, binding.Metadata.Name, func(rb *gen.ReleaseBinding) error {
+	return c.retryReleaseBindingUpdate(ctx, namespaceName, binding.Metadata.Name, func(rb *gen.ReleaseBinding) {
 		container := &gen.ContainerOverride{}
 		if envOverrides != nil {
 			envVars := toGenEnvVars(envOverrides)
@@ -529,21 +508,8 @@ func (c *openChoreoClient) ReplaceReleaseBindingWorkloadOverrides(ctx context.Co
 			container.Files = rb.Spec.WorkloadOverrides.Container.Files
 		}
 		rb.Spec.WorkloadOverrides = &gen.WorkloadOverrides{Container: container}
-		if len(probeOverrides) > 0 {
-			mergeEnvProbeTimings(rb, probeOverrides)
-			// Checked on the binding as it is about to be saved, so wait times saved
-			// concurrently by someone else cannot combine past the limit.
-			checks, err := c.bindingHealthChecks(ctx, namespaceName, rb)
-			if err != nil {
-				return err
-			}
-			if err := checkStartupWindow(checks); err != nil {
-				return err
-			}
-		}
 
 		bumpRestartedAt(rb)
-		return nil
 	})
 }
 
@@ -784,7 +750,6 @@ func (c *openChoreoClient) PromoteComponent(ctx context.Context, ouID, projectNa
 
 	// Step 2: Find the release name deployed in the source environment
 	var sourceReleaseName string
-	var sourceProbes map[string]interface{}
 	if bindingsResp.JSON200 != nil {
 		for _, b := range bindingsResp.JSON200.Items {
 			if b.Spec == nil {
@@ -795,9 +760,6 @@ func (c *openChoreoClient) PromoteComponent(ctx context.Context, ouID, projectNa
 					return fmt.Errorf("no release found in source environment %s: %w", sourceEnvironment, utils.ErrNotFound)
 				}
 				sourceReleaseName = *b.Spec.ReleaseName
-				if b.Spec.ComponentTypeEnvironmentConfigs != nil {
-					sourceProbes = probesIn(*b.Spec.ComponentTypeEnvironmentConfigs)
-				}
 				break
 			}
 		}
@@ -866,9 +828,6 @@ func (c *openChoreoClient) PromoteComponent(ctx context.Context, ouID, projectNa
 			if ctConfigs != nil {
 				binding.Spec.ComponentTypeEnvironmentConfigs = ctConfigs
 			}
-			// Health check wait times follow the source environment.
-			setEnvProbes(binding.Spec, sourceProbes)
-
 			// Force a pod rollout, for the same reason Deploy does: a re-promotion
 			// whose source release and resolved overrides are unchanged writes back a
 			// byte-identical spec, which Kubernetes treats as a no-op — no reconcile,
@@ -907,8 +866,6 @@ func (c *openChoreoClient) PromoteComponent(ctx context.Context, ouID, projectNa
 				},
 			},
 		}
-		// Health check wait times follow the source environment.
-		setEnvProbes(createBody.Spec, sourceProbes)
 
 		createResp, err := c.ocClient.CreateReleaseBindingWithResponse(ctx, namespaceName, createBody)
 		if err != nil {

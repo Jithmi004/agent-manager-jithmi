@@ -475,7 +475,7 @@ export function ConfigureBuildDrawer({
             ? { port: Number(formData.port) }
             : {}),
       },
-      // Sent only when changed: the whole set replaces the agent's build-time health checks.
+      // Sent only when changed: the whole set replaces the agent's health checks.
       ...(healthChecks && healthChecksChanged && {
         healthChecks: toHealthChecksPayload(healthChecks),
       }),

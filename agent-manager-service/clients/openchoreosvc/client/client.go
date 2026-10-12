@@ -81,7 +81,8 @@ type OpenChoreoClient interface {
 	UpdateComponentBasicInfo(ctx context.Context, ouID, projectName, componentName string, req UpdateComponentBasicInfoRequest) error
 	GetEnvResourceConfigs(ctx context.Context, ouID, projectName, componentName, environment string) (*ComponentResourceConfigsResponse, error)
 	UpdateEnvResourceConfigs(ctx context.Context, ouID, projectName, componentName, environment string, req UpdateComponentResourceConfigsRequest) error
-	// GetEnvHealthChecks returns the health checks in effect for a component in an environment.
+	// GetEnvHealthChecks returns an agent's health checks: those of the release an environment runs,
+	// or the agent's current ones when environment is "".
 	GetEnvHealthChecks(ctx context.Context, ouID, componentName, environment string) (*HealthChecks, error)
 	DeleteComponent(ctx context.Context, ouID, projectName, componentName string) error
 	// ListComponents returns only the agent components in the project. Projects are shared
@@ -151,7 +152,7 @@ type OpenChoreoClient interface {
 	// EnsureReleaseBindingRuntimeClass idempotently reconciles runtimeClassName on a binding created
 	// out-of-band by the build workflow. Writes only when the value differs (see impl).
 	EnsureReleaseBindingRuntimeClass(ctx context.Context, ouID, componentName, environment, desiredRuntimeClass string) error
-	ReplaceReleaseBindingWorkloadOverrides(ctx context.Context, ouID, componentName, environment string, envOverrides []EnvVar, fileOverrides []FileVar, probeTimings *HealthCheckTimings) error
+	ReplaceReleaseBindingWorkloadOverrides(ctx context.Context, ouID, componentName, environment string, envOverrides []EnvVar, fileOverrides []FileVar) error
 
 	// Promotion Operations
 	PromoteComponent(ctx context.Context, ouID, projectName, componentName, sourceEnvironment, targetEnvironment string, envOverrides []EnvVar, fileOverrides []FileVar, traitEnvConfigs map[string]interface{}, componentTypeConfigs map[string]interface{}) error

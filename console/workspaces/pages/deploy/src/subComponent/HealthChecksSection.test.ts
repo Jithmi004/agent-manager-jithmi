@@ -17,89 +17,41 @@
  */
 
 import { describe, expect, it } from "vitest";
-import type { HealthChecks } from "@agent-management-platform/types";
-import { changedTimings, toTimingsForm, validateTimings } from "./HealthChecksSection";
+import { describeCheck, describeWaitTimes } from "./HealthChecksSection";
 
-// What an environment runs: startup and readiness on, liveness off.
-const inEffect: HealthChecks = {
-  startup: {
-    enabled: true, type: "tcp",
-    initialDelaySeconds: 10, periodSeconds: 5, timeoutSeconds: 1, failureThreshold: 80,
-  },
-  readiness: {
-    enabled: true, type: "tcp",
-    initialDelaySeconds: 0, periodSeconds: 5, timeoutSeconds: 1, failureThreshold: 6,
-  },
-  liveness: {
-    enabled: false, type: "tcp",
-    initialDelaySeconds: 0, periodSeconds: 10, timeoutSeconds: 1, failureThreshold: 3,
-  },
-};
-
-describe("changedTimings", () => {
-  it("sends nothing when no wait time changed", () => {
-    const form = toTimingsForm(inEffect);
-
-    expect(changedTimings(form, toTimingsForm(inEffect))).toBeUndefined();
+describe("describeCheck", () => {
+  it("says Off for a check that is off or missing", () => {
+    expect(describeCheck({ enabled: false, type: "http", path: "/health" })).toBe("Off");
+    expect(describeCheck(undefined)).toBe("Off");
   });
 
-  it("does not count a wait time that is missing on both sides as changed", () => {
-    const withoutTimeout: HealthChecks = {
-      ...inEffect,
-      startup: { ...inEffect.startup, timeoutSeconds: undefined },
-    };
-
-    expect(
-      changedTimings(toTimingsForm(withoutTimeout), toTimingsForm(withoutTimeout)),
-    ).toBeUndefined();
+  it("describes a TCP check on the agent's port", () => {
+    expect(describeCheck({ enabled: true, type: "tcp" })).toBe("On · TCP on the agent's port");
   });
 
-  it("sends only the wait times the user changed", () => {
-    const initial = toTimingsForm(inEffect);
-    const form = { ...initial, readiness: { ...initial.readiness, periodSeconds: 10 } };
-
-    expect(changedTimings(form, initial)).toEqual({ readiness: { periodSeconds: 10 } });
+  it("describes an HTTP GET check on a set port", () => {
+    expect(describeCheck({ enabled: true, type: "http", path: "/ready", port: 8000 })).toBe(
+      "On · HTTP GET /ready on port 8000",
+    );
   });
 });
 
-describe("validateTimings", () => {
-  it("accepts the values in effect", () => {
-    expect(validateTimings(toTimingsForm(inEffect), inEffect)).toEqual({});
+describe("describeWaitTimes", () => {
+  it("lists every wait time", () => {
+    expect(
+      describeWaitTimes({
+        enabled: true,
+        initialDelaySeconds: 10,
+        periodSeconds: 5,
+        timeoutSeconds: 1,
+        failureThreshold: 60,
+      }),
+    ).toBe("After 10s, every 5s, timeout 1s, 60 failures allowed");
   });
 
-  it("rejects an out-of-range wait time", () => {
-    const form = toTimingsForm(inEffect);
-    form.readiness = { ...form.readiness, periodSeconds: 0 };
-
-    expect(validateTimings(form, inEffect).readiness?.periodSeconds).toBe(
-      "Must be between 1 and 3600",
+  it("leaves out a wait time the response does not have", () => {
+    expect(describeWaitTimes({ enabled: true, periodSeconds: 5, failureThreshold: 6 })).toBe(
+      "Every 5s, 6 failures allowed",
     );
-  });
-
-  it("limits the startup window to an hour", () => {
-    const form = toTimingsForm(inEffect);
-    // 10s + 60s x 80 = 4810s.
-    form.startup = { ...form.startup, periodSeconds: 60 };
-
-    expect(validateTimings(form, inEffect).startup?.failureThreshold).toContain(
-      "the maximum is 60 min",
-    );
-  });
-
-  it("counts a timeout longer than the interval in the startup window", () => {
-    const form = toTimingsForm(inEffect);
-    // 10s + 80 x 100s = 8010s.
-    form.startup = { ...form.startup, timeoutSeconds: 100 };
-
-    expect(validateTimings(form, inEffect).startup?.failureThreshold).toContain(
-      "the maximum is 60 min",
-    );
-  });
-
-  it("does not check a check that is off", () => {
-    const form = toTimingsForm(inEffect);
-    form.liveness = { ...form.liveness, periodSeconds: 0 };
-
-    expect(validateTimings(form, inEffect)).toEqual({});
   });
 });

@@ -198,7 +198,7 @@ type ComponentParameters struct {
 	// RoutePath is a bare path segment with no leading slash: the chart template
 	// supplies the "/" when it renders the HTTPRoute path from this parameter.
 	RoutePath string `json:"routePath,omitempty"`
-	// Probes holds the agent's build-time health checks; nil leaves the defaults.
+	// Probes holds the agent's health checks; nil leaves the defaults.
 	Probes *HealthChecks `json:"probes,omitempty"`
 }
 
@@ -218,19 +218,12 @@ type ComponentResourceConfigsResponse struct {
 	AutoScaling *AutoScalingConfig // Current autoscaling configuration (if applicable)
 }
 
-// Health check (probe) check types.
-const (
-	ProbeTypeTCP  = "tcp"
-	ProbeTypeHTTP = "http"
-)
-
-// probesKey is where health checks are stored: the Component's parameters.probes (build time)
-// and a ReleaseBinding's componentTypeEnvironmentConfigs.probes (per-environment wait times).
+// probesKey is where an agent's health checks are stored: the Component's parameters.probes.
 const probesKey = "probes"
 
-// ProbeTimings holds one health check's wait times. Fields are pointers so a partial value (a
-// build-parameters update, an environment override) carries only the fields it sets. The JSON
-// names match the probes schemas in component-types/agent-api.yaml.
+// ProbeTimings holds one health check's wait times. Fields are pointers so a value carries only
+// the fields it sets; the rest use the defaults. The JSON names match the probes schema in
+// component-types/agent-api.yaml.
 type ProbeTimings struct {
 	InitialDelaySeconds *int32 `json:"initialDelaySeconds,omitempty"`
 	PeriodSeconds       *int32 `json:"periodSeconds,omitempty"`
@@ -249,20 +242,11 @@ type HealthCheck struct {
 	ProbeTimings
 }
 
-// HealthChecks is an agent's health checks, set at build time and stored as the Component's
-// parameters.probes.
+// HealthChecks is an agent's health checks, stored as the Component's parameters.probes.
 type HealthChecks struct {
 	Startup   *HealthCheck `json:"startup,omitempty"`
 	Readiness *HealthCheck `json:"readiness,omitempty"`
 	Liveness  *HealthCheck `json:"liveness,omitempty"`
-}
-
-// HealthCheckTimings holds one environment's wait-time overrides, stored on its ReleaseBinding
-// as componentTypeEnvironmentConfigs.probes. A nil check or field follows the build-time value.
-type HealthCheckTimings struct {
-	Startup   *ProbeTimings `json:"startup,omitempty"`
-	Readiness *ProbeTimings `json:"readiness,omitempty"`
-	Liveness  *ProbeTimings `json:"liveness,omitempty"`
 }
 
 // CreateEnvironmentRequest contains data for creating an environment

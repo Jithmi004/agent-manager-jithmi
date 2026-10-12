@@ -1251,18 +1251,16 @@ func toInt32(v interface{}) (int32, bool) {
 	return 0, false
 }
 
-// A health check's value comes from three layers, each later one getting priority over the previous:
-//  1. defaults    — the `default:` values in agent-api.yaml's parameters.probes schema
-//  2. build time  — the agent's parameters.probes (what to check + baseline wait times)
-//  3. environment — the ReleaseBinding's componentTypeEnvironmentConfigs.probes (wait times)
+// GetEnvHealthChecks returns an agent's health checks: the `default:` values in agent-api.yaml's
+// parameters.probes schema, with the agent's own parameters.probes on top.
 //
-// For an environment, layers 1 and 2 come from the release the environment runs (frozen at
-// deploy), so a build-time change shows there only once it is deployed. Without an environment,
-// they come from the agent as it is now: its build-time health checks.
+// With an environment, both come from the release that environment runs, so a change in the
+// agent's build configuration shows there only after it is deployed there. Without one
+// (environment ""), they come from the agent as it is now.
 func (c *openChoreoClient) GetEnvHealthChecks(ctx context.Context, ouID, componentName, environment string) (*HealthChecks, error) {
 	namespaceName := c.NamespaceFor(ouID)
 	if environment == "" {
-		return c.buildTimeHealthChecks(ctx, namespaceName, componentName)
+		return c.currentHealthChecks(ctx, namespaceName, componentName)
 	}
 
 	binding, err := c.findReleaseBindingForEnv(ctx, namespaceName, componentName, environment)
@@ -1272,9 +1270,8 @@ func (c *openChoreoClient) GetEnvHealthChecks(ctx context.Context, ouID, compone
 	return c.bindingHealthChecks(ctx, namespaceName, binding)
 }
 
-// bindingHealthChecks returns the health checks an environment's binding renders: those
-// of the release it runs, with the binding's own wait times on top. nil when nothing is
-// deployed yet or the release's ComponentType defines no health checks.
+// bindingHealthChecks returns the health checks an environment's binding renders. nil when
+// nothing is deployed yet or the release's ComponentType defines no health checks.
 func (c *openChoreoClient) bindingHealthChecks(ctx context.Context, namespaceName string, binding *gen.ReleaseBinding) (*HealthChecks, error) {
 	if binding == nil || binding.Spec == nil || binding.Spec.ReleaseName == nil || *binding.Spec.ReleaseName == "" {
 		return nil, nil //nolint:nilnil // nothing is deployed in the environment yet
@@ -1292,15 +1289,12 @@ func (c *openChoreoClient) bindingHealthChecks(ctx context.Context, namespaceNam
 	if profile := release.Spec.ComponentProfile; profile != nil && profile.Parameters != nil {
 		effective = mergeMaps(effective, probesIn(*profile.Parameters))
 	}
-	if binding.Spec.ComponentTypeEnvironmentConfigs != nil {
-		effective = mergeMaps(effective, probesIn(*binding.Spec.ComponentTypeEnvironmentConfigs))
-	}
 	return decodeHealthChecks(effective)
 }
 
-// buildTimeHealthChecks returns the agent's health checks as they are set now: its
+// currentHealthChecks returns the agent's health checks as they are set now: its
 // ComponentType's defaults with its own parameters.probes on top.
-func (c *openChoreoClient) buildTimeHealthChecks(ctx context.Context, namespaceName, componentName string) (*HealthChecks, error) {
+func (c *openChoreoClient) currentHealthChecks(ctx context.Context, namespaceName, componentName string) (*HealthChecks, error) {
 	componentResponse, err := c.ocClient.GetComponentWithResponse(ctx, namespaceName, componentName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get component: %w", err)
@@ -1357,8 +1351,9 @@ func (c *openChoreoClient) getComponentRelease(ctx context.Context, namespaceNam
 	return resp.JSON200, nil
 }
 
-// probeDefaults reads layer 1 from a ComponentType's parameters schema. It reports
-// false when the ComponentType defines no health checks.
+// probeDefaults reads the health-check defaults (the `default:` values under
+// parameters.probes) from a ComponentType's parameters schema. It reports false when the
+// ComponentType defines no health checks.
 func probeDefaults(parametersSchema map[string]interface{}) (map[string]interface{}, bool) {
 	probesSchema, ok := lookupMap(parametersSchema, "properties", probesKey)
 	if !ok {
@@ -1411,8 +1406,8 @@ func lookupMap(m map[string]interface{}, keys ...string) (map[string]interface{}
 	return node, true
 }
 
-// probesIn returns the probes section of a parameters or environment configs
-// map, or nil when there is none.
+// probesIn returns the probes section of a Component's parameters, or nil when there
+// is none.
 func probesIn(m map[string]interface{}) map[string]interface{} {
 	probes, _ := m[probesKey].(map[string]interface{})
 	return probes
@@ -1435,61 +1430,6 @@ func mergeMaps(base, override map[string]interface{}) map[string]interface{} {
 		}
 	}
 	return merged
-}
-
-// mergeEnvProbeTimings lays wait times onto an environment's ReleaseBinding
-// (componentTypeEnvironmentConfigs.probes). Only the fields sent change; the
-// environment keeps any other wait time it already overrides.
-func mergeEnvProbeTimings(rb *gen.ReleaseBinding, sent map[string]interface{}) {
-	if len(sent) == 0 {
-		return
-	}
-	if rb.Spec.ComponentTypeEnvironmentConfigs == nil {
-		configs := make(map[string]interface{})
-		rb.Spec.ComponentTypeEnvironmentConfigs = &configs
-	}
-	configs := *rb.Spec.ComponentTypeEnvironmentConfigs
-	configs[probesKey] = mergeMaps(probesIn(configs), sent)
-}
-
-// setEnvProbes makes an environment's health check wait times (its binding's
-// componentTypeEnvironmentConfigs.probes) the given ones, or removes them when
-// probes is nil. Promote uses it to copy the source environment's wait times.
-func setEnvProbes(spec *gen.ReleaseBindingSpec, probes map[string]interface{}) {
-	if spec.ComponentTypeEnvironmentConfigs == nil {
-		if probes == nil {
-			return
-		}
-		configs := make(map[string]interface{})
-		spec.ComponentTypeEnvironmentConfigs = &configs
-	}
-	if probes == nil {
-		delete(*spec.ComponentTypeEnvironmentConfigs, probesKey)
-		return
-	}
-	(*spec.ComponentTypeEnvironmentConfigs)[probesKey] = probes
-}
-
-// checkStartupWindow rejects health checks whose startup check could keep a starting
-// agent longer than utils.MaxStartupWindowSeconds: initial delay + failures allowed ×
-// the longer of interval and timeout.
-func checkStartupWindow(checks *HealthChecks) error {
-	if checks == nil || checks.Startup == nil || checks.Startup.Enabled == nil || !*checks.Startup.Enabled {
-		return nil
-	}
-	value := func(v *int32) int32 {
-		if v == nil {
-			return 0
-		}
-		return *v
-	}
-	s := checks.Startup
-	window := value(s.InitialDelaySeconds) + value(s.FailureThreshold)*max(value(s.PeriodSeconds), value(s.TimeoutSeconds))
-	if window > utils.MaxStartupWindowSeconds {
-		return fmt.Errorf("%w: startup check would wait up to %d seconds (initial delay + failures allowed × the longer of interval and timeout); the maximum is %d",
-			utils.ErrInvalidInput, window, utils.MaxStartupWindowSeconds)
-	}
-	return nil
 }
 
 func (c *openChoreoClient) DeleteComponent(ctx context.Context, ouID, projectName, componentName string) error {

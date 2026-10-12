@@ -32,20 +32,18 @@ spec:
   validations:
     - rule: "${size(workload.endpoints) > 0}"
       message: "Agent API components must have at least one endpoint."
-    # The startup check may keep a starting agent for at most an hour. Checked on the
-    # values the probe is rendered from (defaults, the agent's own, the environment's),
-    # so it also covers combinations no single API request could see. Each attempt
-    # takes the longer of the interval and the timeout.
+        # The startup check may keep a starting agent for at most an hour. Checked on the
+        # values the probe is rendered from (the defaults with the agent's own on top). Each
+        # attempt takes the longer of the interval and the timeout.
     - rule: >-
         ${!parameters.probes.startup.enabled ||
-          environmentConfigs.probes.startup.?initialDelaySeconds.orValue(parameters.probes.startup.initialDelaySeconds) +
-          environmentConfigs.probes.startup.?failureThreshold.orValue(parameters.probes.startup.failureThreshold) *
-          (environmentConfigs.probes.startup.?periodSeconds.orValue(parameters.probes.startup.periodSeconds) >
-            environmentConfigs.probes.startup.?timeoutSeconds.orValue(parameters.probes.startup.timeoutSeconds)
-            ? environmentConfigs.probes.startup.?periodSeconds.orValue(parameters.probes.startup.periodSeconds)
-            : environmentConfigs.probes.startup.?timeoutSeconds.orValue(parameters.probes.startup.timeoutSeconds))
+          parameters.probes.startup.initialDelaySeconds +
+          parameters.probes.startup.failureThreshold *
+          (parameters.probes.startup.periodSeconds > parameters.probes.startup.timeoutSeconds
+            ? parameters.probes.startup.periodSeconds
+            : parameters.probes.startup.timeoutSeconds)
           <= 3600}
-      message: "The startup check may wait at most 3600 seconds (initial delay + failures allowed × the longer of interval and timeout)."
+      message: "The startup check may wait at most 3600 seconds (initial delay + failures allowed * the longer of interval and timeout)."
 
   # Baselines set at component creation time.
   parameters:
@@ -86,10 +84,10 @@ spec:
             routes instead of the distinct paths the legacy expression gave
             each; today every code path produces exactly one endpoint, so this
             is unreachable in practice.
-        # Health checks, set at build time: they depend on the agent image, so they are
-        # the same in every environment. Each check's `port` defaults to the agent's
-        # endpoint port. The wait times here are the baseline; an environment may
-        # override them (environmentConfigs.probes). Defaults reproduce the fixed probes
+        # Health checks: whether each one runs, what it checks and how long it waits.
+        # They belong to the agent, so they are the same in every environment, and an
+        # environment picks up a change on its next deploy. Each check's `port`
+        # defaults to the agent's endpoint port. Defaults reproduce the fixed probes
         # agents had before this was configurable. agent-manager-service reads them from
         # here; the Console's create wizard keeps a copy (DEFAULT_HEALTH_CHECKS) as the
         # form's starting values.
@@ -286,70 +284,6 @@ spec:
           default: ""
         autoscaling:
           $ref: "#/$defs/AutoscalingConfig"
-        probes:
-          type: object
-          default: {}
-          properties:
-            startup:
-              type: object
-              default: {}
-              properties:
-                initialDelaySeconds:
-                  type: integer
-                  minimum: 0
-                  maximum: 3600
-                periodSeconds:
-                  type: integer
-                  minimum: 1
-                  maximum: 3600
-                timeoutSeconds:
-                  type: integer
-                  minimum: 1
-                  maximum: 3600
-                failureThreshold:
-                  type: integer
-                  minimum: 1
-                  maximum: 1000
-            readiness:
-              type: object
-              default: {}
-              properties:
-                initialDelaySeconds:
-                  type: integer
-                  minimum: 0
-                  maximum: 3600
-                periodSeconds:
-                  type: integer
-                  minimum: 1
-                  maximum: 3600
-                timeoutSeconds:
-                  type: integer
-                  minimum: 1
-                  maximum: 3600
-                failureThreshold:
-                  type: integer
-                  minimum: 1
-                  maximum: 1000
-            liveness:
-              type: object
-              default: {}
-              properties:
-                initialDelaySeconds:
-                  type: integer
-                  minimum: 0
-                  maximum: 3600
-                periodSeconds:
-                  type: integer
-                  minimum: 1
-                  maximum: 3600
-                timeoutSeconds:
-                  type: integer
-                  minimum: 1
-                  maximum: 3600
-                failureThreshold:
-                  type: integer
-                  minimum: 1
-                  maximum: 1000
 
   resources:
     - id: sandbox-template
@@ -412,21 +346,17 @@ spec:
                     limits:
                       cpu: ${environmentConfigs.resources.limits.?cpu.orValue(parameters.resources.limits.cpu)}
                       memory: ${environmentConfigs.resources.limits.?memory.orValue(parameters.resources.limits.memory)}
-                  # Each probe: what to check (on/off, type, path, port) comes from the build-time
-                  # parameters.probes; each wait time from the environment's override, else the
-                  # build-time value. A check without a port uses the agent's endpoint port. A
-                  # disabled probe is omitted.
+                  # Each probe comes from parameters.probes: on/off, type (TCP or HTTP GET),
+                  # path, port and wait times. A check without a port uses the agent's endpoint
+                  # port; a disabled check is omitted. oc_merge adds the check itself (httpGet
+                  # or tcpSocket) to its wait times.
                   startupProbe: |
                     ${parameters.probes.startup.enabled ? oc_merge(
                       {
-                        "initialDelaySeconds":
-                          environmentConfigs.probes.startup.?initialDelaySeconds.orValue(parameters.probes.startup.initialDelaySeconds),
-                        "periodSeconds":
-                          environmentConfigs.probes.startup.?periodSeconds.orValue(parameters.probes.startup.periodSeconds),
-                        "timeoutSeconds":
-                          environmentConfigs.probes.startup.?timeoutSeconds.orValue(parameters.probes.startup.timeoutSeconds),
-                        "failureThreshold":
-                          environmentConfigs.probes.startup.?failureThreshold.orValue(parameters.probes.startup.failureThreshold)
+                        "initialDelaySeconds": parameters.probes.startup.initialDelaySeconds,
+                        "periodSeconds": parameters.probes.startup.periodSeconds,
+                        "timeoutSeconds": parameters.probes.startup.timeoutSeconds,
+                        "failureThreshold": parameters.probes.startup.failureThreshold
                       },
                       parameters.probes.startup.type == "http"
                         ? {"httpGet": {"path": parameters.probes.startup.path, "port": parameters.probes.startup.?port.orValue(
@@ -437,14 +367,10 @@ spec:
                   readinessProbe: |
                     ${parameters.probes.readiness.enabled ? oc_merge(
                       {
-                        "initialDelaySeconds":
-                          environmentConfigs.probes.readiness.?initialDelaySeconds.orValue(parameters.probes.readiness.initialDelaySeconds),
-                        "periodSeconds":
-                          environmentConfigs.probes.readiness.?periodSeconds.orValue(parameters.probes.readiness.periodSeconds),
-                        "timeoutSeconds":
-                          environmentConfigs.probes.readiness.?timeoutSeconds.orValue(parameters.probes.readiness.timeoutSeconds),
-                        "failureThreshold":
-                          environmentConfigs.probes.readiness.?failureThreshold.orValue(parameters.probes.readiness.failureThreshold)
+                        "initialDelaySeconds": parameters.probes.readiness.initialDelaySeconds,
+                        "periodSeconds": parameters.probes.readiness.periodSeconds,
+                        "timeoutSeconds": parameters.probes.readiness.timeoutSeconds,
+                        "failureThreshold": parameters.probes.readiness.failureThreshold
                       },
                       parameters.probes.readiness.type == "http"
                         ? {"httpGet": {"path": parameters.probes.readiness.path, "port": parameters.probes.readiness.?port.orValue(
@@ -455,14 +381,10 @@ spec:
                   livenessProbe: |
                     ${parameters.probes.liveness.enabled ? oc_merge(
                       {
-                        "initialDelaySeconds":
-                          environmentConfigs.probes.liveness.?initialDelaySeconds.orValue(parameters.probes.liveness.initialDelaySeconds),
-                        "periodSeconds":
-                          environmentConfigs.probes.liveness.?periodSeconds.orValue(parameters.probes.liveness.periodSeconds),
-                        "timeoutSeconds":
-                          environmentConfigs.probes.liveness.?timeoutSeconds.orValue(parameters.probes.liveness.timeoutSeconds),
-                        "failureThreshold":
-                          environmentConfigs.probes.liveness.?failureThreshold.orValue(parameters.probes.liveness.failureThreshold)
+                        "initialDelaySeconds": parameters.probes.liveness.initialDelaySeconds,
+                        "periodSeconds": parameters.probes.liveness.periodSeconds,
+                        "timeoutSeconds": parameters.probes.liveness.timeoutSeconds,
+                        "failureThreshold": parameters.probes.liveness.failureThreshold
                       },
                       parameters.probes.liveness.type == "http"
                         ? {"httpGet": {"path": parameters.probes.liveness.path, "port": parameters.probes.liveness.?port.orValue(

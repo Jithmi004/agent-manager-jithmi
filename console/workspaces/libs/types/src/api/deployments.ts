@@ -62,7 +62,7 @@ export interface ProbeTimings {
   failureThreshold?: number;
 }
 
-/** One health check: what it checks (set at build time) and how long it waits. */
+/** One health check: what it checks and how long it waits. Set on the agent. */
 export interface HealthCheck extends ProbeTimings {
   enabled?: boolean;
   type?: HealthCheckType;
@@ -72,15 +72,11 @@ export interface HealthCheck extends ProbeTimings {
 }
 
 export type HealthChecks = Partial<Record<HealthCheckName, HealthCheck>>;
-export type HealthCheckTimings = Partial<Record<HealthCheckName, ProbeTimings>>;
 
 export interface UpdateAgentConfigurationsRequest {
   environmentName: string;
   env?: EnvironmentVariable[];
   files?: FileMount[];
-  /** Health check wait times for this environment. Only the fields sent change. */
-  probes?: HealthCheckTimings;
-
 }
 
 export type UpdateAgentConfigurationsPathParams = AgentPathParams;
@@ -159,9 +155,8 @@ export interface ConfigurationItem {
 export interface ConfigurationData {
   env: ConfigurationItem[];
   files?: FileMount[];
-  /** The health checks in effect in this environment. */
+  /** Health checks of the release this environment runs. Read-only. */
   probes?: HealthChecks;
-
 }
 
 export interface ConfigurationResponse {

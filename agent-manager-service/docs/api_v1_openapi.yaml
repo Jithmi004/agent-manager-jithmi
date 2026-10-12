@@ -11671,14 +11671,14 @@ components:
                 - tcp
                 - http
               description: >-
-                tcp passes when the health port accepts a connection; http passes
-                when a GET to path on the health port returns a 2xx or 3xx status.
+                tcp passes when the check's port accepts a connection; http passes
+                when a GET to path on the check's port returns a 2xx or 3xx status.
             port:
               type: integer
               format: int32
               minimum: 1
               maximum: 65535
-              description: Port the checks run against. Defaults to the agent's port.
+              description: Port this check runs against. Defaults to the agent's endpoint port.
             path:
               type: string
               pattern: "^/"
@@ -11688,13 +11688,13 @@ components:
     AgentHealthChecks:
       type: object
       description: >-
-        The agent's health checks. Set at build time because they depend on the
-        agent image; they apply to every environment from the next deploy, and
-        their wait times are the baseline an environment may override. In a
+        The agent's health checks (startup, readiness, liveness): whether each one
+        runs, what it checks and how long it waits. They belong to the agent, not to
+        an environment; an environment picks up a change on its next deploy. In a
         create or build-parameters request, the checks sent replace the agent's
         health checks, and any field left out uses the platform default. In a
-        configurations response, the checks of the release that environment runs,
-        with its wait-time overrides.
+        configurations response, the health checks of the release that environment
+        runs.
       properties:
         startup:
           $ref: "#/components/schemas/AgentHealthCheck"
@@ -11702,20 +11702,6 @@ components:
           $ref: "#/components/schemas/AgentHealthCheck"
         liveness:
           $ref: "#/components/schemas/AgentHealthCheck"
-
-    AgentHealthCheckTimings:
-      type: object
-      description: >-
-        Wait-time changes for the agent's health checks in one environment. Only
-        the fields sent change; the rest keep their current values (the
-        build-time baseline unless changed earlier).
-      properties:
-        startup:
-          $ref: "#/components/schemas/AgentProbeTimings"
-        readiness:
-          $ref: "#/components/schemas/AgentProbeTimings"
-        liveness:
-          $ref: "#/components/schemas/AgentProbeTimings"
 
     CreateAgentRequest:
       type: object
@@ -13046,10 +13032,10 @@ components:
             probes:
               $ref: "#/components/schemas/AgentHealthChecks"
               description: >-
-                Health checks in effect for this environment: the build-time checks
-                (port, on/off, type, path) with this environment's wait times applied,
-                every field resolved. Absent for agents the platform does not run
-                (external agents).
+                Health checks of the release this environment runs, every field
+                resolved. Read-only: they are set in the agent's build configuration
+                and apply from the next deploy. Absent for agents the platform does
+                not run (external agents).
       required:
         - projectName
         - agentName
@@ -14885,7 +14871,7 @@ components:
       properties:
         environmentName:
           type: string
-          description: Name of the environment whose env vars, file mounts, and health checks to replace.
+          description: Name of the environment whose env vars / file mounts to replace.
           example: default
         env:
           type: array
@@ -14897,9 +14883,6 @@ components:
           description: File mounts to apply to the agent's release binding for this environment. Sending an empty array clears all user-managed file mounts.
           items:
             $ref: "#/components/schemas/FileMount"
-        probes:
-          $ref: "#/components/schemas/AgentHealthCheckTimings"
-          description: Health check wait times for this environment. Only the fields sent are changed. Omit to leave them unchanged.
 
     UpdateAgentDeploySettingsRequest:
       type: object

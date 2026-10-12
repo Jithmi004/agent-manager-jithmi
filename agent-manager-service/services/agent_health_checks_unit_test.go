@@ -18,7 +18,6 @@ package services
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,8 +25,6 @@ import (
 
 	"github.com/wso2/agent-manager/agent-manager-service/clients/clientmocks"
 	"github.com/wso2/agent-manager/agent-manager-service/clients/openchoreosvc/client"
-	"github.com/wso2/agent-manager/agent-manager-service/models"
-	"github.com/wso2/agent-manager/agent-manager-service/spec"
 	"github.com/wso2/agent-manager/agent-manager-service/utils"
 )
 
@@ -47,27 +44,6 @@ func healthChecksInEffect() *client.HealthChecks {
 	}
 }
 
-// healthCheckConfigClient is an OpenChoreo client for UpdateAgentConfigurations on
-// a platform-hosted agent in a non-production environment. The binding write is
-// left unset, so a test that must not reach it panics if it does.
-func healthCheckConfigClient(inEffect func() (*client.HealthChecks, error)) *clientmocks.OpenChoreoClientMock {
-	return &clientmocks.OpenChoreoClientMock{
-		GetOrganizationFunc: func(_ context.Context, name string) (*models.OrganizationResponse, error) {
-			return &models.OrganizationResponse{Name: name}, nil
-		},
-		GetComponentFunc: func(_ context.Context, _, _, _ string) (*models.AgentResponse, error) {
-			return &models.AgentResponse{Provisioning: models.Provisioning{Type: string(utils.InternalAgent)}}, nil
-		},
-		GetEnvironmentFunc: nonProductionEnvStub(),
-		GetComponentConfigurationsFunc: func(context.Context, string, string, string, string) ([]models.EnvVars, error) {
-			return nil, nil
-		},
-		GetEnvHealthChecksFunc: func(context.Context, string, string, string) (*client.HealthChecks, error) {
-			return inEffect()
-		},
-	}
-}
-
 // healthCheckTestService is an agent service on oc, with no AgentID env vars to inject.
 func healthCheckTestService(oc *clientmocks.OpenChoreoClientMock) *agentManagerService {
 	injector := &agentIdentityInjectorStub{
@@ -76,108 +52,6 @@ func healthCheckTestService(oc *clientmocks.OpenChoreoClientMock) *agentManagerS
 		},
 	}
 	return &agentManagerService{ocClient: oc, agentIdentityInjection: injector, logger: discardLogger()}
-}
-
-// updateWaitTimes sends timings as the "dev" environment's wait times.
-func updateWaitTimes(t *testing.T, s *agentManagerService, timings *spec.AgentHealthCheckTimings) error {
-	t.Helper()
-	return s.UpdateAgentConfigurations(tierGrantedCtx(t), "acme", "proj1", "my-agent",
-		&spec.UpdateAgentConfigurationsRequest{EnvironmentName: "dev", Probes: timings})
-}
-
-func TestUpdateAgentConfigurations_SavesHealthCheckWaitTimes(t *testing.T) {
-	oc := healthCheckConfigClient(func() (*client.HealthChecks, error) { return healthChecksInEffect(), nil })
-	var saved *client.HealthCheckTimings
-	var savedEnv []client.EnvVar
-	var savedFiles []client.FileVar
-	oc.ReplaceReleaseBindingWorkloadOverridesFunc = func(_ context.Context, _, _, _ string, env []client.EnvVar, files []client.FileVar, probes *client.HealthCheckTimings) error {
-		saved, savedEnv, savedFiles = probes, env, files
-		return nil
-	}
-
-	err := updateWaitTimes(t, healthCheckTestService(oc), &spec.AgentHealthCheckTimings{
-		Startup: &spec.AgentProbeTimings{FailureThreshold: int32Ptr(80)},
-	})
-
-	require.NoError(t, err)
-	require.Len(t, oc.ReplaceReleaseBindingWorkloadOverridesCalls(), 1)
-	require.NotNil(t, saved)
-	require.NotNil(t, saved.Startup)
-	assert.Equal(t, int32(80), *saved.Startup.FailureThreshold)
-	assert.Nil(t, saved.Startup.PeriodSeconds, "only the wait times sent are passed on")
-	assert.Nil(t, saved.Readiness)
-	assert.Nil(t, savedEnv, "env vars not sent are left as they are")
-	assert.Nil(t, savedFiles, "file mounts not sent are left as they are")
-}
-
-func TestUpdateAgentConfigurations_RejectsInvalidHealthCheckWaitTimes(t *testing.T) {
-	tests := []struct {
-		name    string
-		timings *spec.AgentHealthCheckTimings
-	}{
-		{
-			name:    "out of range",
-			timings: &spec.AgentHealthCheckTimings{Readiness: &spec.AgentProbeTimings{PeriodSeconds: int32Ptr(0)}},
-		},
-		{
-			// 10s (in effect) + 60s x 80 = 4810s, over the one-hour limit.
-			name:    "startup window over an hour with the values in effect",
-			timings: &spec.AgentHealthCheckTimings{Startup: &spec.AgentProbeTimings{PeriodSeconds: int32Ptr(60), FailureThreshold: int32Ptr(80)}},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			oc := healthCheckConfigClient(func() (*client.HealthChecks, error) { return healthChecksInEffect(), nil })
-
-			err := updateWaitTimes(t, healthCheckTestService(oc), tt.timings)
-
-			require.Error(t, err)
-			assert.ErrorIs(t, err, utils.ErrInvalidInput)
-			assert.Empty(t, oc.ReplaceReleaseBindingWorkloadOverridesCalls(), "nothing is saved")
-		})
-	}
-}
-
-func TestUpdateAgentConfigurations_EmptyHealthCheckWaitTimesAreNotSaved(t *testing.T) {
-	// An empty probes object asks for nothing, so it must not reach the binding
-	// write (which would restart the agent).
-	oc := healthCheckConfigClient(func() (*client.HealthChecks, error) { return healthChecksInEffect(), nil })
-
-	err := updateWaitTimes(t, healthCheckTestService(oc), &spec.AgentHealthCheckTimings{Startup: &spec.AgentProbeTimings{}})
-
-	require.Error(t, err)
-	assert.ErrorIs(t, err, utils.ErrInvalidInput, "a request with nothing in it is the caller's mistake")
-	assert.Empty(t, oc.GetEnvHealthChecksCalls(), "an empty probes object is treated as not sent")
-	assert.Empty(t, oc.ReplaceReleaseBindingWorkloadOverridesCalls())
-}
-
-func TestUpdateAgentConfigurations_RejectsWaitTimesForAgentWithoutHealthChecks(t *testing.T) {
-	// The agent's ComponentType defines no health checks, as for an external agent.
-	oc := healthCheckConfigClient(func() (*client.HealthChecks, error) {
-		return nil, nil //nolint:nilnil // no health checks, no error
-	})
-
-	err := updateWaitTimes(t, healthCheckTestService(oc), &spec.AgentHealthCheckTimings{
-		Startup: &spec.AgentProbeTimings{FailureThreshold: int32Ptr(80)},
-	})
-
-	require.Error(t, err)
-	assert.ErrorIs(t, err, utils.ErrInvalidInput)
-	assert.Empty(t, oc.ReplaceReleaseBindingWorkloadOverridesCalls())
-}
-
-func TestUpdateAgentConfigurations_HealthCheckReadFailureIsNotInvalidInput(t *testing.T) {
-	boom := errors.New("openchoreo unavailable")
-	oc := healthCheckConfigClient(func() (*client.HealthChecks, error) { return nil, boom })
-
-	err := updateWaitTimes(t, healthCheckTestService(oc), &spec.AgentHealthCheckTimings{
-		Startup: &spec.AgentProbeTimings{FailureThreshold: int32Ptr(80)},
-	})
-
-	require.Error(t, err)
-	assert.ErrorIs(t, err, boom)
-	assert.NotErrorIs(t, err, utils.ErrInvalidInput, "a failed read must not be reported as the caller's mistake")
-	assert.Empty(t, oc.ReplaceReleaseBindingWorkloadOverridesCalls())
 }
 
 func TestGetAgentHealthChecks(t *testing.T) {

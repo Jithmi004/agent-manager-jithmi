@@ -1048,82 +1048,8 @@ func ValidateFileMounts(files []spec.FileMount) error {
 // timeout (an attempt that times out takes its full timeout).
 const MaxStartupWindowSeconds = 3600
 
-// ValidateHealthCheckTimings checks the wait times sent for one environment:
-// each value's range, and that the startup check, with the values sent on top
-// of those in effect (current), still gives up within MaxStartupWindowSeconds.
-func ValidateHealthCheckTimings(timings *spec.AgentHealthCheckTimings, current *spec.AgentHealthChecks) error {
-	if timings == nil {
-		return nil
-	}
-	checks := []struct {
-		name    string
-		timings *spec.AgentProbeTimings
-	}{
-		{"startup", timings.Startup},
-		{"readiness", timings.Readiness},
-		{"liveness", timings.Liveness},
-	}
-	for _, check := range checks {
-		if err := validateProbeTimings(check.name, check.timings); err != nil {
-			return err
-		}
-	}
-
-	sent := timings.Startup
-	if sent == nil || current == nil || current.Startup == nil {
-		return nil
-	}
-	inEffect := current.Startup
-	if inEffect.Enabled != nil && !*inEffect.Enabled {
-		return nil
-	}
-	initialDelay := int32ValueOr(sent.InitialDelaySeconds, inEffect.InitialDelaySeconds)
-	period := int32ValueOr(sent.PeriodSeconds, inEffect.PeriodSeconds)
-	timeout := int32ValueOr(sent.TimeoutSeconds, inEffect.TimeoutSeconds)
-	failures := int32ValueOr(sent.FailureThreshold, inEffect.FailureThreshold)
-	if window := initialDelay + failures*max(period, timeout); window > MaxStartupWindowSeconds {
-		return fmt.Errorf("startup check would wait up to %d seconds (initial delay + failures allowed × the longer of interval and timeout); the maximum is %d",
-			window, MaxStartupWindowSeconds)
-	}
-	return nil
-}
-
-// validateProbeTimings checks each wait time sent for one check is in range.
-func validateProbeTimings(check string, t *spec.AgentProbeTimings) error {
-	if t == nil {
-		return nil
-	}
-	fields := []struct {
-		name     string
-		value    *int32
-		min, max int32
-	}{
-		{"initialDelaySeconds", t.InitialDelaySeconds, 0, 3600},
-		{"periodSeconds", t.PeriodSeconds, 1, 3600},
-		{"timeoutSeconds", t.TimeoutSeconds, 1, 3600},
-		{"failureThreshold", t.FailureThreshold, 1, 1000},
-	}
-	for _, f := range fields {
-		if f.value != nil && (*f.value < f.min || *f.value > f.max) {
-			return fmt.Errorf("%s %s must be between %d and %d", check, f.name, f.min, f.max)
-		}
-	}
-	return nil
-}
-
-// int32ValueOr returns the first of v, fallback that is set, or 0.
-func int32ValueOr(v, fallback *int32) int32 {
-	if v != nil {
-		return *v
-	}
-	if fallback != nil {
-		return *fallback
-	}
-	return 0
-}
-
-// ValidateHealthChecks checks an agent's build-time health checks: each check's
-// type, port and path, its wait times' ranges and the startup check's limit.
+// ValidateHealthChecks checks an agent's health checks: each check's
+// type, port, path and wait-time ranges, and the startup check's limit.
 func ValidateHealthChecks(checks *spec.AgentHealthChecks) error {
 	if checks == nil {
 		return nil
@@ -1149,39 +1075,64 @@ func ValidateHealthChecks(checks *spec.AgentHealthChecks) error {
 		if p := c.check.Path; p != nil && !strings.HasPrefix(*p, "/") {
 			return fmt.Errorf("%s path must start with /", c.name)
 		}
-	}
-	// A field left out uses the platform default, which this check cannot see, so a
-	// startup window mixing sent values with defaults could not be checked here.
-	if s := checks.Startup; s != nil && (s.Enabled == nil || *s.Enabled) {
-		set := 0
-		for _, v := range []*int32{s.InitialDelaySeconds, s.PeriodSeconds, s.FailureThreshold} {
-			if v != nil {
-				set++
-			}
-		}
-		if set > 0 && set < 3 {
-			return fmt.Errorf("startup initialDelaySeconds, periodSeconds and failureThreshold must be set together")
+		if err := validateProbeTimings(c.name, c.check); err != nil {
+			return err
 		}
 	}
-	timings := &spec.AgentHealthCheckTimings{
-		Startup:   probeTimingsOf(checks.Startup),
-		Readiness: probeTimingsOf(checks.Readiness),
-		Liveness:  probeTimingsOf(checks.Liveness),
-	}
-	return ValidateHealthCheckTimings(timings, checks)
+	return validateStartupWindow(checks.Startup)
 }
 
-// probeTimingsOf returns a check's wait times, or nil for no check.
-func probeTimingsOf(c *spec.AgentHealthCheck) *spec.AgentProbeTimings {
-	if c == nil {
+// validateProbeTimings checks each wait time sent for one check is in range.
+func validateProbeTimings(name string, c *spec.AgentHealthCheck) error {
+	fields := []struct {
+		name     string
+		value    *int32
+		min, max int32
+	}{
+		{"initialDelaySeconds", c.InitialDelaySeconds, 0, 3600},
+		{"periodSeconds", c.PeriodSeconds, 1, 3600},
+		{"timeoutSeconds", c.TimeoutSeconds, 1, 3600},
+		{"failureThreshold", c.FailureThreshold, 1, 1000},
+	}
+	for _, f := range fields {
+		if f.value != nil && (*f.value < f.min || *f.value > f.max) {
+			return fmt.Errorf("%s %s must be between %d and %d", name, f.name, f.min, f.max)
+		}
+	}
+	return nil
+}
+
+// validateStartupWindow checks a startup check that is on gives up within
+// MaxStartupWindowSeconds. A field left out uses the platform default, which this
+// check cannot see, so initial delay, interval and failures allowed must be sent
+// together or not at all (all left out means the defaults, which are within the limit).
+func validateStartupWindow(s *spec.AgentHealthCheck) error {
+	if s == nil || (s.Enabled != nil && !*s.Enabled) {
 		return nil
 	}
-	return &spec.AgentProbeTimings{
-		InitialDelaySeconds: c.InitialDelaySeconds,
-		PeriodSeconds:       c.PeriodSeconds,
-		TimeoutSeconds:      c.TimeoutSeconds,
-		FailureThreshold:    c.FailureThreshold,
+	set := 0
+	for _, v := range []*int32{s.InitialDelaySeconds, s.PeriodSeconds, s.FailureThreshold} {
+		if v != nil {
+			set++
+		}
 	}
+	if set == 0 {
+		return nil
+	}
+	if set < 3 {
+		return fmt.Errorf("startup initialDelaySeconds, periodSeconds and failureThreshold must be set together")
+	}
+	// A timeout left out uses the default (1s), never longer than the interval (at least 1s).
+	timeout := int32(0)
+	if s.TimeoutSeconds != nil {
+		timeout = *s.TimeoutSeconds
+	}
+	window := *s.InitialDelaySeconds + *s.FailureThreshold*max(*s.PeriodSeconds, timeout)
+	if window > MaxStartupWindowSeconds {
+		return fmt.Errorf("startup check would wait up to %d seconds (initial delay + failures allowed × the longer of interval and timeout); the maximum is %d",
+			window, MaxStartupWindowSeconds)
+	}
+	return nil
 }
 
 // validateEnvironmentVariables validates environment variables if present in the payload

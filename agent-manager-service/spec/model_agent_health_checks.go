@@ -17,7 +17,7 @@ import (
 // checks if the AgentHealthChecks type satisfies the MappedNullable interface at compile time
 var _ MappedNullable = &AgentHealthChecks{}
 
-// AgentHealthChecks The agent's health checks. Set at build time because they depend on the agent image; they apply to every environment from the next deploy, and their wait times are the baseline an environment may override. In a create or build-parameters request, the checks sent replace the agent's health checks, and any field left out uses the platform default. In a configurations response, the checks of the release that environment runs, with its wait-time overrides.
+// AgentHealthChecks The agent's health checks (startup, readiness, liveness): whether each one runs, what it checks and how long it waits. They belong to the agent, not to an environment; an environment picks up a change on its next deploy. In a create or build-parameters request, the checks sent replace the agent's health checks, and any field left out uses the platform default. In a configurations response, the health checks of the release that environment runs.
 type AgentHealthChecks struct {
 	Startup   *AgentHealthCheck `json:"startup,omitempty"`
 	Readiness *AgentHealthCheck `json:"readiness,omitempty"`

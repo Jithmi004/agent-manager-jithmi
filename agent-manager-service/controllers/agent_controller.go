@@ -242,7 +242,7 @@ func (c *agentController) GetAgent(w http.ResponseWriter, r *http.Request) {
 
 	agentResponse := utils.ConvertToAgentResponse(agent)
 
-	// The agent's build-time health checks; no environment means no per-environment overrides.
+	// The agent's current health checks (no environment).
 	// They are an extra on the agent, so a failed read leaves them out rather than failing the request.
 	healthChecks, err := c.agentService.GetAgentHealthChecks(ctx, ouID, projName, agentName, "")
 	if err != nil {
@@ -1062,7 +1062,8 @@ func (c *agentController) GetAgentConfigurations(w http.ResponseWriter, r *http.
 	}
 	utils.PopulateConfigurationResponseFromAgentConfig(&configurationsResponse, envCfg)
 
-	// Health checks live with env vars and file mounts in the response's configurations.
+	// The health checks of the release this environment runs, shown read-only next to env vars
+	// and file mounts.
 	healthChecks, err := c.agentService.GetAgentHealthChecks(ctx, ouID, projName, agentName, environment)
 	if err != nil {
 		log.Error("GetAgentConfigurations: failed to get health checks", "error", err)

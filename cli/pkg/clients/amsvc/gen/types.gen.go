@@ -1335,32 +1335,20 @@ type AgentHealthCheck struct {
 	// PeriodSeconds Seconds between checks.
 	PeriodSeconds *int32 `json:"periodSeconds,omitempty"`
 
-	// Port Port the checks run against. Defaults to the agent's port.
+	// Port Port this check runs against. Defaults to the agent's endpoint port.
 	Port *int32 `json:"port,omitempty"`
 
 	// TimeoutSeconds Seconds a check may take before it counts as failed.
 	TimeoutSeconds *int32 `json:"timeoutSeconds,omitempty"`
 
-	// Type tcp passes when the health port accepts a connection; http passes when a GET to path on the health port returns a 2xx or 3xx status.
+	// Type tcp passes when the check's port accepts a connection; http passes when a GET to path on the check's port returns a 2xx or 3xx status.
 	Type *AgentHealthCheckType `json:"type,omitempty"`
 }
 
-// AgentHealthCheckType tcp passes when the health port accepts a connection; http passes when a GET to path on the health port returns a 2xx or 3xx status.
+// AgentHealthCheckType tcp passes when the check's port accepts a connection; http passes when a GET to path on the check's port returns a 2xx or 3xx status.
 type AgentHealthCheckType string
 
-// AgentHealthCheckTimings Wait-time changes for the agent's health checks in one environment. Only the fields sent change; the rest keep their current values (the build-time baseline unless changed earlier).
-type AgentHealthCheckTimings struct {
-	// Liveness Wait times of one health check.
-	Liveness *AgentProbeTimings `json:"liveness,omitempty"`
-
-	// Readiness Wait times of one health check.
-	Readiness *AgentProbeTimings `json:"readiness,omitempty"`
-
-	// Startup Wait times of one health check.
-	Startup *AgentProbeTimings `json:"startup,omitempty"`
-}
-
-// AgentHealthChecks The agent's health checks. Set at build time because they depend on the agent image; they apply to every environment from the next deploy, and their wait times are the baseline an environment may override. In a create or build-parameters request, the checks sent replace the agent's health checks, and any field left out uses the platform default. In a configurations response, the checks of the release that environment runs, with its wait-time overrides.
+// AgentHealthChecks The agent's health checks (startup, readiness, liveness): whether each one runs, what it checks and how long it waits. They belong to the agent, not to an environment; an environment picks up a change on its next deploy. In a create or build-parameters request, the checks sent replace the agent's health checks, and any field left out uses the platform default. In a configurations response, the health checks of the release that environment runs.
 type AgentHealthChecks struct {
 	// Liveness One Kubernetes health probe for the agent container: what it checks and how long it waits.
 	Liveness *AgentHealthCheck `json:"liveness,omitempty"`
@@ -1705,7 +1693,7 @@ type AgentResponse struct {
 	Description string          `json:"description"`
 	DisplayName string          `json:"displayName"`
 
-	// HealthChecks The agent's health checks. Set at build time because they depend on the agent image; they apply to every environment from the next deploy, and their wait times are the baseline an environment may override. In a create or build-parameters request, the checks sent replace the agent's health checks, and any field left out uses the platform default. In a configurations response, the checks of the release that environment runs, with its wait-time overrides.
+	// HealthChecks The agent's health checks (startup, readiness, liveness): whether each one runs, what it checks and how long it waits. They belong to the agent, not to an environment; an environment picks up a change on its next deploy. In a create or build-parameters request, the checks sent replace the agent's health checks, and any field left out uses the platform default. In a configurations response, the health checks of the release that environment runs.
 	HealthChecks *AgentHealthChecks `json:"healthChecks,omitempty"`
 
 	// InputInterface Endpoint configurations
@@ -2179,7 +2167,7 @@ type ConfigurationResponse struct {
 		// Files List of file mount configurations
 		Files []FileMount `json:"files"`
 
-		// Probes The agent's health checks. Set at build time because they depend on the agent image; they apply to every environment from the next deploy, and their wait times are the baseline an environment may override. In a create or build-parameters request, the checks sent replace the agent's health checks, and any field left out uses the platform default. In a configurations response, the checks of the release that environment runs, with its wait-time overrides.
+		// Probes The agent's health checks (startup, readiness, liveness): whether each one runs, what it checks and how long it waits. They belong to the agent, not to an environment; an environment picks up a change on its next deploy. In a create or build-parameters request, the checks sent replace the agent's health checks, and any field left out uses the platform default. In a configurations response, the health checks of the release that environment runs.
 		Probes *AgentHealthChecks `json:"probes,omitempty"`
 	} `json:"configurations"`
 	CorsConfig *CORSConfig `json:"corsConfig,omitempty"`
@@ -2336,7 +2324,7 @@ type CreateAgentRequest struct {
 	// DisplayName Display name of the agent
 	DisplayName string `json:"displayName"`
 
-	// HealthChecks The agent's health checks. Set at build time because they depend on the agent image; they apply to every environment from the next deploy, and their wait times are the baseline an environment may override. In a create or build-parameters request, the checks sent replace the agent's health checks, and any field left out uses the platform default. In a configurations response, the checks of the release that environment runs, with its wait-time overrides.
+	// HealthChecks The agent's health checks (startup, readiness, liveness): whether each one runs, what it checks and how long it waits. They belong to the agent, not to an environment; an environment picks up a change on its next deploy. In a create or build-parameters request, the checks sent replace the agent's health checks, and any field left out uses the platform default. In a configurations response, the health checks of the release that environment runs.
 	HealthChecks *AgentHealthChecks `json:"healthChecks,omitempty"`
 
 	// InputInterface Endpoint configurations
@@ -5235,7 +5223,7 @@ type UpdateAgentBuildParametersRequest struct {
 	Build          Build           `json:"build"`
 	Configurations *Configurations `json:"configurations,omitempty"`
 
-	// HealthChecks The agent's health checks. Set at build time because they depend on the agent image; they apply to every environment from the next deploy, and their wait times are the baseline an environment may override. In a create or build-parameters request, the checks sent replace the agent's health checks, and any field left out uses the platform default. In a configurations response, the checks of the release that environment runs, with its wait-time overrides.
+	// HealthChecks The agent's health checks (startup, readiness, liveness): whether each one runs, what it checks and how long it waits. They belong to the agent, not to an environment; an environment picks up a change on its next deploy. In a create or build-parameters request, the checks sent replace the agent's health checks, and any field left out uses the platform default. In a configurations response, the health checks of the release that environment runs.
 	HealthChecks *AgentHealthChecks `json:"healthChecks,omitempty"`
 
 	// InputInterface Endpoint configurations
@@ -5248,14 +5236,11 @@ type UpdateAgentConfigurationsRequest struct {
 	// Env Environment variables to apply to the agent's release binding for this environment. System-managed keys are filtered server-side and re-injected from the agent's LLM/MCP configuration. Sending an empty array clears all user-managed env vars.
 	Env *[]EnvironmentVariable `json:"env,omitempty"`
 
-	// EnvironmentName Name of the environment whose env vars, file mounts, and health checks to replace.
+	// EnvironmentName Name of the environment whose env vars / file mounts to replace.
 	EnvironmentName string `json:"environmentName"`
 
 	// Files File mounts to apply to the agent's release binding for this environment. Sending an empty array clears all user-managed file mounts.
 	Files *[]FileMount `json:"files,omitempty"`
-
-	// Probes Wait-time changes for the agent's health checks in one environment. Only the fields sent change; the rest keep their current values (the build-time baseline unless changed earlier).
-	Probes *AgentHealthCheckTimings `json:"probes,omitempty"`
 }
 
 // UpdateAgentDeploySettingsRequest defines model for UpdateAgentDeploySettingsRequest.
