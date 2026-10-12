@@ -17,12 +17,43 @@
  */
 
 import { describe, expect, it } from "vitest";
+import type { HealthChecks } from "@agent-management-platform/types";
 import {
-  DEFAULT_HEALTH_CHECKS,
   toHealthChecksForm,
   toHealthChecksPayload,
   validateHealthChecksForm,
 } from "./HealthChecksEditor";
+
+// The platform defaults (agent-api.yaml, parameters.probes).
+const DEFAULT_HEALTH_CHECKS: HealthChecks = {
+  startup: {
+    enabled: true,
+    type: "tcp",
+    path: "/health",
+    initialDelaySeconds: 10,
+    periodSeconds: 5,
+    timeoutSeconds: 1,
+    failureThreshold: 60,
+  },
+  readiness: {
+    enabled: true,
+    type: "tcp",
+    path: "/health",
+    initialDelaySeconds: 0,
+    periodSeconds: 5,
+    timeoutSeconds: 1,
+    failureThreshold: 6,
+  },
+  liveness: {
+    enabled: false,
+    type: "tcp",
+    path: "/health",
+    initialDelaySeconds: 0,
+    periodSeconds: 10,
+    timeoutSeconds: 1,
+    failureThreshold: 3,
+  },
+};
 
 describe("toHealthChecksForm", () => {
   it("seeds every check from the agent's health checks", () => {

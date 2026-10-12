@@ -19,14 +19,7 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { Alert, Form } from "@wso2/oxygen-ui";
 import { PageLayout, useFormValidation } from "@agent-management-platform/views";
-import {
-  DEFAULT_HEALTH_CHECKS,
-  toHealthChecksForm,
-  toHealthChecksPayload,
-  useUnsavedChangesGuard,
-  validateHealthChecksForm,
-  type HealthChecksFormValues,
-} from "@agent-management-platform/shared-component";
+import { useUnsavedChangesGuard } from "@agent-management-platform/shared-component";
 import { generatePath, useNavigate, useParams } from "react-router-dom";
 import {
   absoluteRouteMap,
@@ -49,6 +42,7 @@ import {
   hasUnresolvedMCPSecurity,
   mcpEntryVarNames,
 } from "../utils/mcpEnvVarNames";
+import { readinessOptionFor } from "../utils/readinessCheck";
 
 export const InternalAgentFlow: React.FC = () => {
   const navigate = useNavigate();
@@ -77,6 +71,8 @@ export const InternalAgentFlow: React.FC = () => {
     port: "" as unknown as number,
     basePath: "/",
     openApiPath: "",
+    readinessType: "tcp" as const,
+    readinessPath: readinessOptionFor("DEFAULT")?.httpPath ?? "",
     env: [],
     files: [],
   }));
@@ -87,15 +83,6 @@ export const InternalAgentFlow: React.FC = () => {
 
   const [llmProviders, setLLMProviders] = useState<LLMProviderFormEntry[]>([]);
   const [mcpProxies, setMCPProxies] = useState<MCPProxyFormEntry[]>([]);
-
-  // Health checks start at the platform defaults and are sent only if the user
-  // changes them, so an untouched agent keeps following agent-api.yaml's defaults.
-  const [initialHealthChecks] = useState<HealthChecksFormValues>(() =>
-    toHealthChecksForm(DEFAULT_HEALTH_CHECKS),
-  );
-  const [healthChecks, setHealthChecks] = useState<HealthChecksFormValues>(initialHealthChecks);
-  const healthCheckErrors = useMemo(() => validateHealthChecksForm(healthChecks), [healthChecks]);
-  const healthChecksChanged = JSON.stringify(healthChecks) !== JSON.stringify(initialHealthChecks);
 
   const { mutate: createAgent, isPending, error } = useCreateAgent();
 
@@ -129,11 +116,9 @@ export const InternalAgentFlow: React.FC = () => {
     return (
       llmProviders.length > 0 ||
       mcpProxies.length > 0 ||
-      healthChecksChanged ||
       JSON.stringify(withSeeded(formData)) !== JSON.stringify(baselineFormData)
     );
-  }, [formData, baselineFormData, llmProviders, mcpProxies, healthChecksChanged]);
-
+  }, [formData, baselineFormData, llmProviders, mcpProxies]);
   const { allowNavigation } = useUnsavedChangesGuard(isDirty);
 
   const params = useMemo<OrgProjPathParams>(
@@ -180,12 +165,7 @@ export const InternalAgentFlow: React.FC = () => {
     } else {
       setLastSubmittedValidationErrors({});
     }
-    if (Object.keys(healthCheckErrors).length > 0) {
-      setLastSubmittedValidationErrors({
-        healthChecks: "Fix the highlighted health check values.",
-      });
-      return;
-    }
+
     if ((llmProviders.length > 0 || mcpProxies.length > 0) && !initialEnvironmentName) {
       setLastSubmittedValidationErrors({
         llmProvider: "Unable to resolve the initial deployment environment for LLM provider / MCP Server configuration.",
@@ -200,9 +180,6 @@ export const InternalAgentFlow: React.FC = () => {
       initialEnvironmentName,
       mcpProxies,
     );
-    if (healthChecksChanged) {
-      payload.body.healthChecks = toHealthChecksPayload(healthChecks);
-    }
     createAgent(payload, {
       onSuccess: () => {
         allowNavigation(() =>
@@ -234,9 +211,6 @@ export const InternalAgentFlow: React.FC = () => {
     llmProviders,
     mcpProxies,
     initialEnvironmentName,
-    healthCheckErrors,
-    healthChecks,
-    healthChecksChanged,
   ]);
 
 
@@ -267,9 +241,6 @@ export const InternalAgentFlow: React.FC = () => {
           initialEnvironmentName={initialEnvironmentName}
           isInitialEnvironmentLoading={isDeploymentPipelineLoading}
           firstEnvOnlyNotice={firstEnvOnlyNotice}
-          healthChecks={healthChecks}
-          setHealthChecks={setHealthChecks}
-          healthCheckErrors={healthCheckErrors}
         />
 
         {!!error && (

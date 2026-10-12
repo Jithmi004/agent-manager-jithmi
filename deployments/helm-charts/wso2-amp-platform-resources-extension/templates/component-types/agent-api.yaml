@@ -89,8 +89,7 @@ spec:
         # environment picks up a change on its next deploy. Each check's `port`
         # defaults to the agent's endpoint port. Defaults reproduce the fixed probes
         # agents had before this was configurable. agent-manager-service reads them from
-        # here; the Console's create wizard keeps a copy (DEFAULT_HEALTH_CHECKS) as the
-        # form's starting values.
+        # here.
         probes:
           type: object
           default: {}
