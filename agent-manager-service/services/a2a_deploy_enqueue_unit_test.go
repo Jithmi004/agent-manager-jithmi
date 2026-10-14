@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/wso2/agent-manager/agent-manager-service/clients/clientmocks"
 	"github.com/wso2/agent-manager/agent-manager-service/models"
 	"github.com/wso2/agent-manager/agent-manager-service/repositories/repomocks"
 )
@@ -42,13 +43,15 @@ func TestEnqueueA2APublicationRecordsTheArtifactUUID(t *testing.T) {
 
 	envUUID := uuid.New()
 	artifactUUID := uuid.New()
-	svc.enqueueA2APublication(context.Background(), "org-1", "checkout", "trip-planner", "dev", envUUID, artifactUUID)
+	agentUUID := uuid.New()
+	svc.enqueueA2APublication(context.Background(), "org-1", "checkout", "trip-planner", "dev", envUUID, artifactUUID, &agentUUID)
 
 	require.Len(t, enqueued, 1)
 	assert.Equal(t, "trip-planner", enqueued[0].AgentName)
 	assert.Equal(t, "dev", enqueued[0].EnvironmentName)
 	assert.Equal(t, envUUID, enqueued[0].EnvironmentUUID)
 	assert.Equal(t, artifactUUID, enqueued[0].ArtifactUUID)
+	assert.Equal(t, &agentUUID, enqueued[0].AgentUUID)
 }
 
 // A queue failure must not fail a deploy that has otherwise succeeded — the
@@ -61,7 +64,7 @@ func TestEnqueueA2APublicationSurvivesRepoFailure(t *testing.T) {
 	}
 	svc := &agentManagerService{a2aPublicationRepo: repo, logger: testLogger()}
 	assert.NotPanics(t, func() {
-		svc.enqueueA2APublication(context.Background(), "org-1", "checkout", "trip-planner", "dev", uuid.New(), uuid.New())
+		svc.enqueueA2APublication(context.Background(), "org-1", "checkout", "trip-planner", "dev", uuid.New(), uuid.New(), nil)
 	})
 }
 
@@ -74,7 +77,7 @@ func TestRepublishA2AAgentQueuesA2AAgents(t *testing.T) {
 		},
 	}
 	svc := &agentManagerService{a2aPublicationRepo: repo, logger: testLogger()}
-	agent := &models.AgentResponse{Type: models.AgentType{Type: "agent-api", SubType: "a2a-agent"}}
+	agent := &models.AgentResponse{UUID: "6f1c2a7e-4c1b-4e0a-9a51-2b7f0e3d9c11", Type: models.AgentType{Type: "agent-api", SubType: "a2a-agent"}}
 	envUUID, artifactUUID := uuid.New(), uuid.New()
 
 	require.NoError(t, svc.republishA2AAgent(context.Background(), agent, "org-1", "checkout", "trip-planner", "staging", envUUID.String(), artifactUUID))
@@ -83,6 +86,8 @@ func TestRepublishA2AAgentQueuesA2AAgents(t *testing.T) {
 	assert.Equal(t, "staging", enqueued[0].EnvironmentName)
 	assert.Equal(t, envUUID, enqueued[0].EnvironmentUUID)
 	assert.Equal(t, artifactUUID, enqueued[0].ArtifactUUID)
+	require.NotNil(t, enqueued[0].AgentUUID)
+	assert.Equal(t, agent.UUID, enqueued[0].AgentUUID.String())
 }
 
 // A REST agent's policies ride on its release binding, which the caller has
@@ -114,7 +119,13 @@ func TestEnqueueCreatedA2AAgentQueuesTheFirstEnvironment(t *testing.T) {
 			return nil
 		},
 	}
-	svc := &agentManagerService{a2aPublicationRepo: repo, logger: testLogger()}
+	agentUUID := uuid.New()
+	oc := &clientmocks.OpenChoreoClientMock{
+		GetComponentFunc: func(_ context.Context, _, _, name string) (*models.AgentResponse, error) {
+			return &models.AgentResponse{UUID: agentUUID.String(), Name: name}, nil
+		},
+	}
+	svc := &agentManagerService{a2aPublicationRepo: repo, ocClient: oc, logger: testLogger()}
 	envUUID := uuid.New()
 	artifact := &models.Artifact{UUID: uuid.New()}
 
@@ -124,6 +135,29 @@ func TestEnqueueCreatedA2AAgentQueuesTheFirstEnvironment(t *testing.T) {
 	assert.Equal(t, "dev", enqueued[0].EnvironmentName)
 	assert.Equal(t, envUUID, enqueued[0].EnvironmentUUID)
 	assert.Equal(t, artifact.UUID, enqueued[0].ArtifactUUID)
+	assert.Equal(t, &agentUUID, enqueued[0].AgentUUID)
+}
+
+// The UUID only sharpens the reconciler's cleanup, so a failed lookup still queues the row.
+func TestEnqueueCreatedA2AAgentQueuesEvenWhenTheAgentLookupFails(t *testing.T) {
+	var enqueued []models.A2APublication
+	repo := &repomocks.A2APublicationRepositoryMock{
+		EnqueueFunc: func(ctx context.Context, pub *models.A2APublication) error {
+			enqueued = append(enqueued, *pub)
+			return nil
+		},
+	}
+	oc := &clientmocks.OpenChoreoClientMock{
+		GetComponentFunc: func(context.Context, string, string, string) (*models.AgentResponse, error) {
+			return nil, assert.AnError
+		},
+	}
+	svc := &agentManagerService{a2aPublicationRepo: repo, ocClient: oc, logger: testLogger()}
+
+	svc.enqueueCreatedA2AAgent(context.Background(), "a2a-agent", "org-1", "checkout", "trip-planner", "dev", uuid.New().String(), &models.Artifact{UUID: uuid.New()})
+
+	require.Len(t, enqueued, 1)
+	assert.Nil(t, enqueued[0].AgentUUID)
 }
 
 // Non-A2A agents and agents without an env artifact have nothing to publish; a

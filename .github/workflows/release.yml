@@ -172,6 +172,15 @@ jobs:
           TARGET_RELEASE: ${{ inputs.target_version }}
         shell: bash
 
+      - name: Update k3d-install.sh
+        run: |
+          bash .github/scripts/update-install-helpers.sh \
+            "$TARGET_RELEASE" \
+            "./deployments/quick-start/k3d-install.sh"
+        env:
+          TARGET_RELEASE: ${{ inputs.target_version }}
+        shell: bash
+
       - name: Commit version updates
         id: commit-changes
         run: |
@@ -645,13 +654,16 @@ jobs:
 
             echo ""
             echo "### Install bundle"
-            echo "\`wso2-agent-manager-${VERSION}.tar.gz\` bundles both the VM and quick-start installers. \`bootstrap.sh\` and \`start.sh\` are also attached standalone as the one-command entry points:"
+            echo "\`wso2-agent-manager-${VERSION}.tar.gz\` bundles both the VM and quick-start installers. \`bootstrap.sh\`, \`start.sh\` and \`k3d-install.sh\` are also attached standalone as the one-command entry points:"
             echo '```'
             echo "# VM install"
             echo "curl -fsSL https://github.com/${REPO_OWNER}/agent-manager/releases/download/amp/v${VERSION}/bootstrap.sh | sudo bash -s -- simple --host <PUBLIC_IP> --version ${VERSION}"
             echo ""
             echo "# Quick-start (local dev container)"
             echo "curl -fsSL https://github.com/${REPO_OWNER}/agent-manager/releases/download/amp/v${VERSION}/start.sh -o start.sh && chmod +x start.sh && ./start.sh"
+            echo ""
+            echo "# Local k3d cluster, installed directly on the host"
+            echo "curl -fsSL https://github.com/${REPO_OWNER}/agent-manager/releases/download/amp/v${VERSION}/k3d-install.sh | bash"
             echo '```'
           } > /tmp/release-body.md
 

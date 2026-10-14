@@ -23,20 +23,23 @@ import { absoluteRouteMap } from "@agent-management-platform/types";
  * Deep-links to the Configure Agent page with the given tab pre-selected.
  * Mirrors CONFIGURE_TAB_PARAM/CONFIGURE_TAB_KEYS in
  * pages/configure-agent/src/configureTabs.ts, which aren't part of that
- * package's public exports — keep the "llm"/"tools" values in sync if those
- * ever change.
+ * package's public exports — keep the "llm"/"tools"/"a2a" values and the
+ * "env" param in sync if those ever change.
  */
 export function buildConfigureTabHref(
     orgId: string,
     projectId: string,
     agentId: string,
-    tab: "llm" | "tools",
+    tab: "llm" | "tools" | "a2a",
+    envName?: string,
 ): string {
     const path = generatePath(
         absoluteRouteMap.children.org.children.projects.children.agents.children.configure.path,
         { orgId, projectId, agentId },
     );
-    return `${path}?tab=${tab}`;
+    const query = new URLSearchParams({ tab });
+    if (envName) query.set("env", envName);
+    return `${path}?${query}`;
 }
 
 const configureRoutes =

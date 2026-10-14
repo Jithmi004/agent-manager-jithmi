@@ -269,6 +269,15 @@ jobs:
           TARGET_VERSION: ${{ inputs.target_version }}
         shell: bash
 
+      - name: Update k3d-install.sh
+        run: |
+          bash .github/scripts/update-install-helpers.sh \
+            "$TARGET_VERSION" \
+            "./deployments/quick-start/k3d-install.sh"
+        env:
+          TARGET_VERSION: ${{ inputs.target_version }}
+        shell: bash
+
       # A promotion that stamped nothing means the placeholders were already
       # consumed, which resolve-source-commit.sh is supposed to make impossible.
       - name: Commit version updates
@@ -665,13 +674,27 @@ jobs:
 
             echo ""
             echo "### Install bundle"
-            echo "\`wso2-agent-manager-${VERSION}.tar.gz\` bundles both the VM and quick-start installers. \`bootstrap.sh\` and \`start.sh\` are also attached standalone as the one-command entry points:"
+            # A release promoted from a tree that predates k3d-install.sh has no such
+            # asset, because the bundle is built by that tree's own build-vm-bundle.sh.
+            HAS_K3D_INSTALL=false
+            [ -f deployments/quick-start/k3d-install.sh ] && HAS_K3D_INSTALL=true
+            if [ "$HAS_K3D_INSTALL" = true ]; then
+              ENTRY_POINTS="\`bootstrap.sh\`, \`start.sh\` and \`k3d-install.sh\` are"
+            else
+              ENTRY_POINTS="\`bootstrap.sh\` and \`start.sh\` are"
+            fi
+            echo "\`wso2-agent-manager-${VERSION}.tar.gz\` bundles both the VM and quick-start installers. ${ENTRY_POINTS} also attached standalone as the one-command entry points:"
             echo '```'
             echo "# VM install"
-            echo "curl -fsSL https://github.com/${REGISTRY_ORG}/agent-manager/releases/download/amp/v${VERSION}/bootstrap.sh | sudo bash -s -- simple --host <PUBLIC_IP> --version ${VERSION}"
+            echo "curl -fsSL https://github.com/${REPO_OWNER}/agent-manager/releases/download/amp/v${VERSION}/bootstrap.sh | sudo bash -s -- simple --host <PUBLIC_IP> --version ${VERSION}"
             echo ""
             echo "# Quick-start (local dev container)"
-            echo "curl -fsSL https://github.com/${REGISTRY_ORG}/agent-manager/releases/download/amp/v${VERSION}/start.sh -o start.sh && chmod +x start.sh && ./start.sh"
+            echo "curl -fsSL https://github.com/${REPO_OWNER}/agent-manager/releases/download/amp/v${VERSION}/start.sh -o start.sh && chmod +x start.sh && ./start.sh"
+            if [ "$HAS_K3D_INSTALL" = true ]; then
+              echo ""
+              echo "# Local k3d cluster, installed directly on the host"
+              echo "curl -fsSL https://github.com/${REPO_OWNER}/agent-manager/releases/download/amp/v${VERSION}/k3d-install.sh | bash"
+            fi
             echo '```'
           } > /tmp/release-body.md
 
@@ -683,6 +706,9 @@ jobs:
         env:
           VERSION: ${{ inputs.target_version }}
           SOURCE_VERSION: ${{ inputs.source_version }}
+          # The published URLs follow the repository, not REGISTRY_ORG, which
+          # names a registry namespace and need not match the GitHub owner.
+          REPO_OWNER: ${{ github.repository_owner }}
         shell: bash
 
       - name: Download amctl artifacts

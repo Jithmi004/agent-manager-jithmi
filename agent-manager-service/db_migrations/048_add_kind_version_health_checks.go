@@ -24,8 +24,8 @@ import (
 // was published, so a catalog agent checks its image the way that image expects.
 // NULL for versions published before this, whose images date from when every agent
 // had the platform's default health checks.
-var migration047 = migration{
-	ID: 47,
+var migration048 = migration{
+	ID: 48,
 	Migrate: func(db *gorm.DB) error {
 		return db.Exec(`
 		ALTER TABLE agent_kind_versions

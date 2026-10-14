@@ -46,6 +46,7 @@ type Instance struct {
 	URL              string     `yaml:"url"`
 	TokenURL         string     `yaml:"token_url"`
 	AuthorizationURL string     `yaml:"authorization_url,omitempty"`
+	AuthServer       string     `yaml:"auth_server,omitempty"`
 	CurrentOrg       string     `yaml:"current_org,omitempty"`
 	Auth             AuthConfig `yaml:"auth,omitempty"`
 }
@@ -58,6 +59,7 @@ type AuthConfig struct {
 	RefreshToken string    `yaml:"refresh_token,omitempty"`
 	ExpiresAt    time.Time `yaml:"expires_at,omitempty"`
 	Scopes       []string  `yaml:"scopes,omitempty"`
+	Resource     string    `yaml:"resource,omitempty"`
 }
 
 func (c *Config) Current() (*Instance, error) {

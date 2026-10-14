@@ -329,3 +329,22 @@ func TestA2APublicationFindPublishedPagesPublishedRows(t *testing.T) {
 	assert.Contains(t, names, published.AgentName)
 	assert.NotContains(t, names, pending.AgentName)
 }
+
+func TestA2APublicationEnqueueRecordsTheAgentUUID(t *testing.T) {
+	ctx := context.Background()
+	repo := NewA2APublicationRepository(db.GetDB())
+	pub := newTestPublication("uuid-" + uuid.New().String()[:8])
+	cleanupPublication(t, repo, pub)
+	first := uuid.New()
+	pub.AgentUUID = &first
+	require.NoError(t, repo.Enqueue(ctx, pub))
+	require.NotNil(t, statusOf(t, pub).AgentUUID)
+	assert.Equal(t, first, *statusOf(t, pub).AgentUUID)
+
+	again := newTestPublication(pub.AgentName)
+	again.OUID = pub.OUID
+	second := uuid.New()
+	again.AgentUUID = &second
+	require.NoError(t, repo.Enqueue(ctx, again))
+	assert.Equal(t, second, *statusOf(t, pub).AgentUUID, "a re-enqueue records the current agent")
+}

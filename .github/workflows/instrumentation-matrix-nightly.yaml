@@ -43,6 +43,22 @@ jobs:
           name: nightly-emission-py${{ matrix.python }}
           path: test/instrumentation-matrix/reports/cells/
 
+  resolve-heavy-shards:
+    runs-on:
+      - codebuild-wso2_agent-manager-${{ github.run_id }}-${{ github.run_attempt }}
+    outputs:
+      versions: ${{ steps.shards.outputs.versions }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - run: pip install pyyaml
+      - name: List heavy-tier shards
+        id: shards
+        working-directory: test/instrumentation-matrix
+        run: python scripts/resolve_heavy_shards.py
+
   heavy-tier:
     # Pinned to GitHub-hosted, unlike the emission jobs: this is the only job
     # that stands up k3d (via amp-dev-stack), and k3d's API server never becomes
@@ -51,9 +67,16 @@ jobs:
     # `kubectl` hangs and `make setup-k3d` times out. ubuntu-latest is its own
     # Docker host, where k3d's port publishing works.
     runs-on: ubuntu-latest
-    needs: full-emission-matrix
-    # ~11 min stack bring-up plus 4-5.5 min per cell; 24 cells need ~130 min.
-    timeout-minutes: 180
+    needs: [full-emission-matrix, resolve-heavy-shards]
+    # One shard per Traceloop version, each on its own stack: a new release
+    # adds a parallel shard instead of lengthening one serial run, and a
+    # wedged cluster only fails its own shard's cells. ~11 min stack bring-up
+    # plus 4-5.5 min per cell; 8 cells per shard need ~45-55 min.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        traceloop: ${{ fromJSON(needs.resolve-heavy-shards.outputs.versions) }}
     steps:
       - uses: actions/checkout@v6
       # Build the AMP component images from this branch and stand up the full
@@ -80,6 +103,7 @@ jobs:
           # Build each deployed sample from the ref under test. Nightly runs on
           # main, so this is main; on a manual branch run it's that branch.
           AMP_AGENT_REPO_BRANCH: ${{ github.ref_name }}
+          HEAVY_PROVIDER_VERSION: ${{ matrix.traceloop }}
         run: nox -s heavy
       - name: Dump cluster diagnostics on failure
         if: failure()
@@ -177,7 +201,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: nightly-heavy
+          name: nightly-heavy-${{ matrix.traceloop }}
           path: test/instrumentation-matrix/reports/heavy/
 
   revalidate-known-broken:
@@ -287,10 +311,12 @@ jobs:
           merge-multiple: true
           path: test/instrumentation-matrix/reports/cells/
         continue-on-error: true
+      # Merge the per-Traceloop heavy shards the same way.
       - uses: actions/download-artifact@v8
         if: always()
         with:
-          name: nightly-heavy
+          pattern: nightly-heavy-*
+          merge-multiple: true
           path: test/instrumentation-matrix/reports/heavy/
         continue-on-error: true
       - name: Build summary

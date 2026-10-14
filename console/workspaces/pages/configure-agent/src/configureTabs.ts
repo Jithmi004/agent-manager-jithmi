@@ -21,5 +21,7 @@
 // resetting to the first one. Shared by Configure.Component.tsx (reads/writes
 // it) and the LLM/MCP detail views (write it into their own backHref).
 export const CONFIGURE_TAB_PARAM = "tab";
-export const CONFIGURE_TAB_KEYS = ["llm", "tools"] as const;
+export const CONFIGURE_TAB_KEYS = ["llm", "tools", "a2a"] as const;
 export type ConfigureTabKey = (typeof CONFIGURE_TAB_KEYS)[number];
+// Environment selected on the A2A tab, by name.
+export const CONFIGURE_ENV_PARAM = "env";

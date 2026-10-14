@@ -51,12 +51,45 @@ export interface TraceOverview {
   status?: TraceStatus;
   input?: string;
   output?: string;
+  models?: string[];
+  conversationId?: string;
+  tools?: string[];
+  failedTools?: string[];
+  mcpServers?: string[];
   score?: TraceScore | null;
 }
 
 export interface TraceListResponse {
   traces: TraceOverview[];
   totalCount: number;
+  /** How far back the server looked (RFC3339Nano). Display only, never a paging bound. */
+  lookedBackTo?: string;
+  /** True when a server cap stopped the request before the page filled. */
+  truncated?: boolean;
+  /** Opaque cursor for the next page of the same window; absent when the window ran out. */
+  nextCursor?: string;
+}
+
+/** A trace field the missing filter can require to be absent. */
+export type TraceMissingField = 'conversationId';
+
+/** Server-side trace list filters. Set fields AND together. */
+export interface TraceFilters {
+  status?: 'error' | 'ok';
+  minDurationMs?: number;
+  minTokens?: number;
+  minSpanCount?: number;
+  /** Case-insensitive substring of any entry in TraceOverview.models. Implies includeModels. */
+  model?: string;
+  conversationId?: string;
+  /** Case-insensitive substring of any entry in TraceOverview.tools. */
+  tool?: string;
+  /** Only traces with a failed tool; with tool set, the failed tool must be one tool matches. */
+  toolError?: boolean;
+  /** Case-insensitive substring of any entry in TraceOverview.mcpServers. */
+  mcpServer?: string;
+  /** Only traces without these fields. Can't be combined with the same field's value filter. */
+  missing?: TraceMissingField[];
 }
 
 // Keep Trace as an alias for backward compatibility
@@ -225,6 +258,14 @@ export interface FullTrace {
 export interface TraceExportResponse {
   traces: FullTrace[];
   totalCount: number;
+  /** How far a filtered export looked (RFC3339Nano); absent without filters. */
+  lookedBackTo?: string;
+  /** True when the search stopped before the end of the time range or spansTruncated is true. */
+  truncated?: boolean;
+  /** True when an exported trace hit the 10,000 span cap and its spans were cut. */
+  spansTruncated?: boolean;
+  /** Traces left out of the file because they couldn't be read. */
+  failedTraceIds?: string[];
 }
 
 export type ExportTracesPathParams = {

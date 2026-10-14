@@ -32,7 +32,7 @@ on:
         type: boolean
         default: false
       heavy_cell_id:
-        description: 'Run only this one heavy-subset cell id (cheap iteration); empty = full subset'
+        description: 'Run only this one heavy-subset cell id (cheap iteration; ignores the filters above); empty = the filtered subset'
         required: false
         default: ''
 
@@ -161,6 +161,43 @@ jobs:
             (new attributes, different prompt response) is a signal worth
             investigating, not a rubber-stamp refresh.
 
+  resolve-heavy-shards:
+    runs-on:
+      - codebuild-wso2_agent-manager-${{ github.run_id }}-${{ github.run_attempt }}
+    if: ${{ inputs.heavy_only || inputs.include_heavy_tier }}
+    outputs:
+      versions: ${{ steps.shards.outputs.versions }}
+      count: ${{ steps.shards.outputs.count }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - run: pip install pyyaml
+      # The filter inputs narrow the heavy subset the same way they narrow the
+      # emission matrix; each Traceloop version left becomes one heavy job.
+      - name: List heavy-tier shards
+        id: shards
+        working-directory: test/instrumentation-matrix
+        env:
+          FILTER_TRACELOOP_VERSIONS: ${{ inputs.traceloop_versions }}
+          FILTER_FRAMEWORKS: ${{ inputs.frameworks }}
+          FILTER_FRAMEWORK_VERSIONS: ${{ inputs.framework_versions }}
+          FILTER_PYTHON_VERSIONS: ${{ inputs.python_versions }}
+          HEAVY_CELL_ID: ${{ inputs.heavy_cell_id }}
+        run: python scripts/resolve_heavy_shards.py
+      - name: Guard against an empty heavy run
+        if: steps.shards.outputs.count == '0'
+        env:
+          HEAVY_CELL_ID: ${{ inputs.heavy_cell_id }}
+        run: |
+          if [ -n "$HEAVY_CELL_ID" ]; then
+            echo "::error::heavy_cell_id '$HEAVY_CELL_ID' is not in the heavy subset."
+            exit 1
+          fi
+          # Not an error: the filters may name only emission-only frameworks.
+          echo "::warning::the filters match no heavy-subset cell; skipping the heavy tier."
+
   heavy:
     # Pinned to GitHub-hosted, unlike the emission jobs above: this is the only
     # job that stands up k3d (via amp-dev-stack), and k3d's API server never
@@ -169,10 +206,21 @@ jobs:
     # runner, so `kubectl` hangs and `make setup-k3d` times out. ubuntu-latest
     # is its own Docker host, where k3d's port publishing works.
     runs-on: ubuntu-latest
-    needs: run-cells
+    needs: [run-cells, resolve-heavy-shards]
     # Normal run: gate behind a green emission matrix. heavy_only: run
     # regardless (run-cells is skipped), so always() is needed to evaluate at all.
-    if: ${{ always() && (inputs.heavy_only || (inputs.include_heavy_tier && needs.run-cells.result == 'success')) }}
+    if: >-
+      ${{ always() && needs.resolve-heavy-shards.result == 'success' &&
+      needs.resolve-heavy-shards.outputs.count != '0' &&
+      (inputs.heavy_only || (inputs.include_heavy_tier && needs.run-cells.result == 'success')) }}
+    # One shard per Traceloop version, each on its own stack, as in the
+    # nightly. ~11 min stack bring-up plus 4-5.5 min per cell; a full shard
+    # of 8 cells needs ~45-55 min.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        traceloop: ${{ fromJSON(needs.resolve-heavy-shards.outputs.versions) }}
     steps:
       - uses: actions/checkout@v6
       # Build AMP component images from this branch + stand up the stack on
@@ -194,8 +242,14 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.INSTRUMENTATION_TEST_ANTHROPIC_API_KEY }}
           # The deployed customer-support-agent's web-search tool needs this.
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          # Narrow the shard exactly as resolve-heavy-shards did; empty = all.
+          FILTER_TRACELOOP_VERSIONS: ${{ inputs.traceloop_versions }}
+          FILTER_FRAMEWORKS: ${{ inputs.frameworks }}
+          FILTER_FRAMEWORK_VERSIONS: ${{ inputs.framework_versions }}
+          FILTER_PYTHON_VERSIONS: ${{ inputs.python_versions }}
           # Optional single-cell run for cheap iteration; empty = full subset.
           HEAVY_CELL_ID: ${{ inputs.heavy_cell_id }}
+          HEAVY_PROVIDER_VERSION: ${{ matrix.traceloop }}
           # Build each deployed sample from the ref under test, so a PR can
           # validate a new/changed sample before it merges to main.
           AMP_AGENT_REPO_BRANCH: ${{ github.ref_name }}
@@ -320,5 +374,5 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: manual-heavy
+          name: manual-heavy-${{ matrix.traceloop }}
           path: test/instrumentation-matrix/reports/heavy/

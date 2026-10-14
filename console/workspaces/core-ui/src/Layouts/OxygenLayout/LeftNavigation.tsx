@@ -17,7 +17,7 @@
  */
 
 import { Sidebar } from "@wso2/oxygen-ui";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 export interface NavigationItem {
@@ -34,6 +34,8 @@ export interface NavigationSection {
   items: Array<NavigationItem>;
   icon?: ReactNode;
   type: 'section';
+  // When true, the group header becomes a collapsible nav item instead of a static title.
+  collapsible?: boolean;
 }
 
 interface LeftNavigationProps {
@@ -81,10 +83,21 @@ function findParentLabel(items: NavigationItem[], childLabel: string): string | 
 export const flattenWithChildren = (items: NavigationItem[]): NavigationItem[] =>
   items.flatMap((item) => [item, ...flattenWithChildren(item.children ?? [])]);
 
+// Turns a section into a nav item with its items as children; Sidebar.Item handles expand/collapse.
+export const sectionToItem = (section: NavigationSection): NavigationItem => ({
+  label: section.title,
+  type: 'item',
+  icon: section.icon,
+  children: section.items,
+});
+
 export const combineNavItems = (
   mainItems: NavigationItem[],
   groupedItems: NavigationSection[],
-): NavigationItem[] => [...mainItems, ...groupedItems.flatMap((group) => group.items)];
+): NavigationItem[] => [
+  ...mainItems,
+  ...groupedItems.flatMap((group) => (group.collapsible ? [sectionToItem(group)] : group.items)),
+];
 
 export function LeftNavigation({
   collapsed,
@@ -103,12 +116,34 @@ export function LeftNavigation({
   );
   const flatItems = useMemo(() => flattenWithChildren(allItems), [allItems]);
 
+  // Only force-expand when activeItem itself changes, not on every allItems
+  // reference change 
+  const lastExpandedForRef = useRef<string | undefined>(undefined);
   useEffect(() => {
+    if (lastExpandedForRef.current === activeItem) {
+      return;
+    }
+    lastExpandedForRef.current = activeItem;
     const parentLabel = findParentLabel(allItems, activeItem);
     if (parentLabel) {
       setExpandedMenus((prev) => (prev[parentLabel] ? prev : { ...prev, [parentLabel]: true }));
     }
   }, [activeItem, allItems]);
+
+  // Collapsible groups start expanded, without resetting a group the user already toggled.
+  useEffect(() => {
+    setExpandedMenus((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const group of groupedItems) {
+        if (group.collapsible && !(group.title in next)) {
+          next[group.title] = true;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [groupedItems]);
 
   const handleToggleExpand = (id: string) => {
     setExpandedMenus((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -152,12 +187,16 @@ export function LeftNavigation({
         }}
       >
         <Sidebar.Category>{topItems.map(renderItem)}</Sidebar.Category>
-        {groupedItems.map((group) => (
-          <Sidebar.Category key={group.title}>
-            <Sidebar.CategoryLabel>{group.title}</Sidebar.CategoryLabel>
-            {group.items.map(renderItem)}
-          </Sidebar.Category>
-        ))}
+        {groupedItems.map((group) =>
+          group.collapsible ? (
+            renderItem(sectionToItem(group))
+          ) : (
+            <Sidebar.Category key={group.title}>
+              <Sidebar.CategoryLabel>{group.title}</Sidebar.CategoryLabel>
+              {group.items.map(renderItem)}
+            </Sidebar.Category>
+          ),
+        )}
       </Sidebar.Nav>
       {bottomItems.length > 0 && (
         <Sidebar.Footer>

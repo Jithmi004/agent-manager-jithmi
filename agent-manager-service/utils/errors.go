@@ -86,14 +86,18 @@ func IsValidationError(err error) *ValidationError {
 
 var (
 	// Resource not found errors
-	ErrProjectNotFound             = errors.New("project not found")
-	ErrAgentAlreadyExists          = errors.New("agent already exists")
-	ErrAgentNotFound               = errors.New("agent not found")
-	ErrTraitNotFound               = errors.New("trait not found")
-	ErrOrganizationNotFound        = errors.New("organization not found")
-	ErrBuildNotFound               = errors.New("build not found")
-	ErrEnvironmentNotFound         = errors.New("environment not found")
-	ErrAgentIdentityNotProvisioned = errors.New("agent identity not yet provisioned for this environment")
+	ErrProjectNotFound               = errors.New("project not found")
+	ErrAgentAlreadyExists            = errors.New("agent already exists")
+	ErrAgentNotFound                 = errors.New("agent not found")
+	ErrAgentCardNotFound             = errors.New("agent card not found")
+	ErrAgentNotDeployedInEnvironment = errors.New("agent is not deployed in this environment")
+	ErrAgentNotA2A                   = errors.New("agent is not an A2A agent")
+	ErrAgentCardSourceNotExternal    = errors.New("a card source can be set only for external A2A agents")
+	ErrTraitNotFound                 = errors.New("trait not found")
+	ErrOrganizationNotFound          = errors.New("organization not found")
+	ErrBuildNotFound                 = errors.New("build not found")
+	ErrEnvironmentNotFound           = errors.New("environment not found")
+	ErrAgentIdentityNotProvisioned   = errors.New("agent identity not yet provisioned for this environment")
 	// ErrAgentIdentityRetryNotAllowed is returned when a retry is requested for
 	// a binding whose current status is not failed. Maps to 409.
 	ErrAgentIdentityRetryNotAllowed = errors.New("agent identity binding is not in a failed state and cannot be retried")

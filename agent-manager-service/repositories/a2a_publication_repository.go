@@ -107,7 +107,7 @@ func (r *a2aPublicationRepository) Enqueue(ctx context.Context, pub *models.A2AP
 			{Name: "environment_name"},
 		},
 		DoUpdates: clause.AssignmentColumns([]string{
-			"environment_uuid", "artifact_uuid", "status",
+			"environment_uuid", "artifact_uuid", "agent_uuid", "status",
 			"attempt_count", "last_error", "next_attempt_at", "updated_at",
 		}),
 	}).Create(pub).Error

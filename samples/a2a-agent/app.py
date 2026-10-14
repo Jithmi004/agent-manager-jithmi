@@ -91,7 +91,7 @@ def build_agent_card() -> AgentCard:
     client picks from. The URLs are this agent's own address; the gateway
     rewrites them to its own when it serves the card.
     """
-    base_url = os.getenv("AGENT_PUBLIC_BASE_URL", f"http://localhost:{PORT}").rstrip("/")
+    base_url = (os.getenv("AGENT_PUBLIC_BASE_URL") or f"http://localhost:{PORT}").rstrip("/")
     return AgentCard(
         name="a2a-notes-agent",
         description=(

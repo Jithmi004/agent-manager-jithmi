@@ -122,7 +122,7 @@ func loadEnvs() {
 		SDKVolumeName: r.readOptionalString("OTEL_SDK_VOLUME_NAME", "otel-tracing-sdk-volume"),
 		SDKMountPath:  r.readOptionalString("OTEL_SDK_MOUNT_PATH", "/otel-tracing-sdk"),
 
-		DefaultInstrumentationVersion: r.readOptionalString("OTEL_DEFAULT_INSTRUMENTATION_VERSION", "0.4.1"),
+		DefaultInstrumentationVersion: r.readOptionalString("OTEL_DEFAULT_INSTRUMENTATION_VERSION", "0.4.2"),
 
 		InstrumentationExtensionPath: r.readOptionalString("INSTRUMENTATION_EXTENSION_PATH", "/etc/amp/instrumentation-extension.yaml"),
 
@@ -152,6 +152,14 @@ func loadEnvs() {
 
 	config.InstrumentationURL = r.readOptionalString("INSTRUMENTATION_URL", "http://default-default.gateway.localhost:19080/otel")
 	config.DefaultGatewayPort = int(r.readOptionalInt64("DEFAULT_GATEWAY_PORT", 19080))
+	config.A2ACardFetchDialAddr = r.readOptionalString("A2A_CARD_FETCH_DIAL_ADDR", "")
+	if addr := config.A2ACardFetchDialAddr; addr != "" {
+		if host, port, err := net.SplitHostPort(addr); err != nil {
+			r.errors = append(r.errors, fmt.Errorf("A2A_CARD_FETCH_DIAL_ADDR must be host:port: %w", err))
+		} else if host == "" || port == "" {
+			r.errors = append(r.errors, fmt.Errorf("A2A_CARD_FETCH_DIAL_ADDR must contain a non-empty host and port"))
+		}
+	}
 	config.KeyManagerConfigurations = KeyManagerConfigurations{
 		// Comma-separated list of allowed issuers and audiences
 		Issuer:   r.readOptionalStringList("KEY_MANAGER_ISSUER", "Agent Management Platform Local"),

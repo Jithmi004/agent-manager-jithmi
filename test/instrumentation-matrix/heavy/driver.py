@@ -28,9 +28,10 @@ from pathlib import Path
 
 import requests
 
+from harness.cell_filter import CellFilter
 from harness.deployable_samples import DEPLOYABLE_SAMPLES
-from harness.heavy_subset import select_heavy_subset
-from harness.manifest import Cell, expand_matrix, load_manifest
+from harness.heavy_subset import filter_shard, select_heavy_run
+from harness.manifest import Cell, load_manifest
 from harness.reports import CellResult, write_cell_report
 from harness.validator import ContractValidator
 from heavy import k3d
@@ -113,19 +114,22 @@ def _outcome(r: CellResult) -> str:
 
 def main() -> int:
     m = load_manifest(HERE / "matrix.yaml")
-    cells = select_heavy_subset(expand_matrix(m), m)
-
-    # Optional single-cell filter for cheap iteration: set HEAVY_CELL_ID to a
-    # cell id from the heavy subset to run just that one. Empty/unset runs all.
+    # Optional narrowing, all empty/unset by default (= the whole subset):
+    #   FILTER_* — the manual workflow's version/framework/python filters;
+    #   HEAVY_CELL_ID — one heavy-subset cell, for cheap iteration;
+    #   HEAVY_PROVIDER_VERSION — the CI shard (one job per Traceloop version).
     only = os.environ.get("HEAVY_CELL_ID", "").strip()
-    if only:
-        cells = [c for c in cells if c.id == only]
-        if not cells:
-            print(
-                f"HEAVY_CELL_ID={only!r} matched no cell in the heavy subset",
-                file=sys.stderr,
-            )
-            return 1
+    cells = select_heavy_run(m, CellFilter.from_env(), only)
+    shard = os.environ.get("HEAVY_PROVIDER_VERSION", "").strip()
+    if shard:
+        cells = filter_shard(cells, shard)
+    if not cells:
+        print(
+            f"no heavy-subset cell matched (HEAVY_CELL_ID={only!r}, "
+            f"HEAVY_PROVIDER_VERSION={shard!r}, FILTER_* env)",
+            file=sys.stderr,
+        )
+        return 1
 
     client = AmpClient(
         base_url=_env("AMP_API_BASE_URL"),

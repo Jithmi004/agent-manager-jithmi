@@ -59,7 +59,9 @@ type A2APublication struct {
 	// ArtifactUUID is the per-environment models.KindAgent artifact row. It is
 	// the agentId the gateway is told about and the key its API keys are bound
 	// to, so it is captured at enqueue time rather than re-derived later.
-	ArtifactUUID  uuid.UUID            `gorm:"column:artifact_uuid;type:uuid;not null"`
+	ArtifactUUID uuid.UUID `gorm:"column:artifact_uuid;type:uuid;not null"`
+	// AgentUUID is the agent the row was queued for; nil on rows queued before it was recorded.
+	AgentUUID     *uuid.UUID           `gorm:"column:agent_uuid;type:uuid"`
 	Status        A2APublicationStatus `gorm:"column:status;not null;default:'pending'"`
 	AttemptCount  int                  `gorm:"column:attempt_count;not null;default:0"`
 	LastError     string               `gorm:"column:last_error;not null;default:''"`

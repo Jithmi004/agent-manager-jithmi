@@ -19,7 +19,7 @@ HTTP → RequestLogger → CORS → mux ┬→ /health                          
 - **`observer/`** — the typed HTTP client to the upstream Observer (`QueryTraces`, `QueryTraceSpans`, `GetSpanDetails`), plus auth token management and response→`opensearch.Span` conversion.
 - **`opensearch/`** — pure span-parsing logic. Extracts input/output from spans; branches by vendor (CrewAI via `crewai.*` attributes vs LangChain/Traceloop via `traceloop.entity.*`).
 - **`config/`** — env-var config loading + startup validation.
-- **`mcp/`** — the `am-obs-mcp` streamable-HTTP MCP server (`mcp/setup.go`) and its seven tools (`mcp/tools/`): `get_runtime_logs`, `get_build_logs`, `get_metrics`, `list_traces`, `get_traces`, `get_trace_details`, `get_span_details`. Tool handlers call `controllers.TracingController`/`controllers.ObservabilityController` directly — no HTTP hop, no claims parsing. Every tool takes an explicit, required `organization` input except `get_span_details` (its controller call is scoped by trace/span ID alone).
+- **`mcp/`** — the `am-obs-mcp` streamable-HTTP MCP server (`mcp/setup.go`) and its seven tools (`mcp/tools/`): `get_runtime_logs`, `get_build_logs`, `get_metrics`, `list_traces`, `get_traces`, `get_trace_details`, `get_span_details`. Tool handlers call `controllers.TracingController`/`controllers.ObservabilityController` directly — no HTTP hop, no claims parsing. Every tool takes an explicit, required `organization` input except `get_span_details` (its controller call is scoped by trace/span ID alone). `list_traces` and `get_traces` take the list filters as snake_case inputs (`status`, `min_duration_ms`, `min_tokens`, `min_span_count`, `model`, `conversation_id`), checked by the same `controllers` validators as the HTTP handler; `list_traces` also takes `include_models` and `cursor`.
 
 ## File map
 
@@ -99,7 +99,70 @@ The intended rule (not yet enforced): the caller's org identity from the JWT mus
 - **Errors** — wrap with a `pkg.Func:` prefix and `%w`: `fmt.Errorf("observer.QueryTraces: %w", err)`.
 - **Context** — every I/O call takes `context.Context` first and propagates it. **Never pass `nil` as the context** — always pass `r.Context()` or a context derived from it (`context.WithCancel`/`WithTimeout`); a `nil` context panics downstream.
 - **Logging** — `slog` (JSON). Use the request-scoped logger via `logger.WithLogger`/`GetLogger(ctx)`. The request logger currently attaches `method`, `path`, `remote_addr`, `status`, `duration`. Per the platform rule, request-scoped logs should carry correlation context — when you log inside a trace query, add the identifiers you have (`organization`, trace/span IDs, request ID) so entries are traceable. Upstream partial failures are logged as warnings, not fatal.
-- **Concurrency in enrichment** — the controller uses a **two-tier semaphore** (outer: max 10 concurrent traces; inner: max 50 concurrent span fetches). Do not collapse to one pool — it prevents deadlock. Enrichment short-circuits once fields are filled, skips leaf aggregation above 100 spans, and caps leaf fetches at 50 (`TokenUsage.Partial=true` when truncated). The export path uses `context.WithCancel` + `atomic.Bool` for fail-fast.
+- **Concurrency in enrichment** — the controller uses a **two-tier semaphore** (outer: max 10 concurrent traces; inner: max 50 concurrent span fetches). Do not collapse to one pool — it prevents deadlock. See [Trace enrichment and filtering](#trace-enrichment-and-filtering).
+
+## Trace enrichment and filtering
+
+All in `controllers/controller.go`.
+
+### Enrichment
+
+- Short-circuits once the fields are filled.
+- Skips leaf aggregation above **100 spans**.
+- Caps leaf fetches at **50**; sets `TokenUsage.Partial=true` when it hits the cap.
+- With `include=models` (or a `model` filter), below 100 spans the span list is fetched with inline attributes:
+  - Chain and leaf steps read their spans from it instead of calling `GetSpanDetails`.
+  - The root comes from it too, unless a root filter is set — so a trace costs one span-list call.
+  - The leaf cap still applies, so a row's tokens match with the flag on or off.
+- With `include=tools`, at most **200 spans** (`maxToolListSpans`), `tools` and `failedTools` come from the span list (`toolsFromSpanList`):
+  - It reuses the list the cascade reads. A root-complete trace fetches it without attributes, so it costs one call; other traces cost none.
+  - It reads only span names (`ToolNameFromSpanName`: `execute_tool {name}`, `{name}.tool`) and the OTel status, never attributes.
+  - Limitation: spans named only after the tool (OpenInference, Logfire) aren't recognised, and a bare `execute_tool` names no tool.
+- With `include=mcpServers`, at most 200 spans, `mcpServers` come from the trace's `initialize.mcp` spans (`readMCPServers`):
+  - They're found by name in the same list. `handshakesToFetch` keeps one per tool: each is keyed by its parent span's tool name (`ToolNameFromSpanName`, from the same attribute-free list), and one whose parent isn't in the list or names no tool is its own key. A client that opens a session per tool call puts a handshake under every call, and calls to one tool reach one server.
+  - Each kept handshake costs one `GetSpanDetails`, for the first **5** keys in start order (`maxMCPHandshakesPerTrace`), fetched after the tool and model checks and before the child and leaf steps.
+  - A filtered walk also counts its handshake fetches across traces; see the per-request cap below. An unfiltered page doesn't walk, so it's bounded only per trace: up to `limit` × 5.
+  - The server is `serverInfo.name` (else `title`) from the span's `traceloop.entity.output` (`MCPServerFromHandshake`); the rest of that output is skipped.
+  - Limitation: only Traceloop's MCP instrumentation emits the span, and only when the agent opens a session inside the trace. An agent that holds one session for its lifetime reports no servers in later traces.
+
+### Filtered list
+
+Filters run as early as possible, so a rejected trace stays cheap:
+
+- **`status`** — `matchesStatus`, right after the root fetch. A rejected trace costs one call.
+- **`conversationId`** — the ID comes from the root, then the child and leaf spans (`ExtractConversationID`). Without the filter only spans enrichment reads anyway are checked, so it costs no extra call. With it, a root with another ID rejects the trace after one call. A root without one, even a complete one, leaves the trace open: another ID on the child rejects it before the leaf fetches, and a trace with no ID is read in full and left out. A failed read the ID depends on (the span list, the child, or a leaf ahead of the first ID) lists the trace as failed, not as having no ID.
+- **`model`** — `matchesModel`, as soon as the span list gives the models, before the child and leaf fetches. Traces over 100 spans have no models, so they're rejected after the root fetch.
+- **`tool`, `toolError`** — `matchesTools` on the tools from the span list's names and OTel statuses, never attributes. Both imply `include=tools`, and with both set, a failed tool must match `tool`.
+  - Traces over `maxToolListSpans` (200) have no tools, so `matchesSummary` rejects them before any fetch.
+  - With no `status` or `conversationId` filter, the span list is fetched before the root, without attributes unless `listSpansFirst` already wants them. A rejected trace costs one list call and no root fetch; only matches fetch the root and run the cascade.
+  - With `status` or `conversationId`, the root comes first, then the list.
+  - A failed list fetch lists the trace as failed.
+- **`mcpServer`** — `matchesMCPServer` on `mcpServers`; implies `include=mcpServers`. It shares the tool filters' span cap and list-before-root order, and its handshake fetches come last, before the child and leaf steps. A trace with no handshake span is rejected after the list, at no extra call. A failed handshake fetch lists the trace as failed.
+
+The walk stops at the 500-trace examine cap or after **20 s** (`listLookBackBudget`), returning `truncated` and a `nextCursor`. The budget doesn't cut the first chunk; only the **25 s** request deadline (`requestTimeout`) does, failing the request. After it, the walk's fetches run under the budget, which cancels those in flight without a warning; the walk then stops before the chunk they belong to.
+
+With `mcpServer` or `include=mcpServers`, the walk also stops before its next chunk once it has fetched **100** MCP handshakes (`maxMCPHandshakesPerRequest`), the same way: `truncated`, a `nextCursor` at the last examined trace, and `handshakeCapReached` in the walk's log line. The first chunk always runs and a chunk in flight finishes, so a request fetches at most 99 + 50 × 5 = 349 handshakes. Once the cap is reached, that chunk's failed traces aren't retried. Export selection uses the same walk. Other requests never fetch a handshake, so the cap never stops them.
+
+A trace that can't be read is retried once, then left out. The list fails, filtered or not, when it could read none of the traces it examined. A trace a filter rejected after reading it counts as read.
+
+### Export
+
+- **No filter** — one `QueryTraces` call.
+- **Filtered** — selects traces with `lookBackForMatches`, then fetches full spans only for the matches. Selection has no cursor, the same 500-trace examine cap and 100-handshake cap, and a **10 s** budget that leaves the rest of the 25 s `requestTimeout` for the span fetches. An export still running at `requestTimeout` fails.
+- Uses the same filter criteria as the list, but the shorter budget and no paging can cover a different part of history, so it may not select the same traces.
+
+Retried once:
+
+- Selection: a failed root fetch, or a failed span list under a `model` or `minTokens` filter.
+- Span phase: a failed `QueryTraceSpans`.
+
+Response flags:
+
+- `truncated` — the search stopped early, or a trace hit the **10 000** span cap.
+- `spansTruncated` — the span cap only, so a client can tell the two apart.
+- `failedTraceIds` — traces left out because they still failed after the retry, had no root span, or fell short of `minTokens` with leaf spans unread (past the cap or failed).
+
+The export fails only when `ctx` is done or it could read none of the traces it selected.
 
 ## Gotchas
 
