@@ -205,7 +205,11 @@ export const createAgentSchema = z.object({
     .optional(),
   // Readiness check: TCP (the platform default) or an HTTP GET to readinessPath.
   readinessType: z.enum(['tcp', 'http']).optional(),
-  readinessPath: z.string().trim().optional(),
+  readinessPath: z
+    .string()
+    .trim()
+    .max(1024, 'Path must be at most 1024 characters')
+    .optional(),
   env: z
     .array(
       z.object({

@@ -68,6 +68,12 @@ describe("createAgentSchema readiness check", () => {
     ]);
   });
 
+  it("limits the path to 1024 characters, as the backend does", () => {
+    expect(
+      readinessPathErrors({ readinessType: "http", readinessPath: "/" + "a".repeat(1024) }),
+    ).toEqual(["Path must be at most 1024 characters"]);
+  });
+
   it("requires the path to start with /", () => {
     expect(readinessPathErrors({ readinessType: "http", readinessPath: "health" })).toEqual([
       "Path must start with / and contain no spaces",
