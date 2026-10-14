@@ -33,7 +33,7 @@ type AgentHealthCheck struct {
 	Type *string `json:"type,omitempty"`
 	// Port this check runs against. Defaults to the agent's endpoint port.
 	Port *int32 `json:"port,omitempty"`
-	// Path requested when type is http (e.g. \"/health\").
+	// Path requested when type is http (e.g. \"/health\"). No spaces.
 	Path *string `json:"path,omitempty"`
 }
 

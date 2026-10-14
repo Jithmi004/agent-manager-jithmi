@@ -113,7 +113,7 @@ spec:
                   maximum: 65535
                 path:
                   type: string
-                  pattern: '^/'
+                  pattern: '^/\S*$'
                   maxLength: 1024
                   default: /health
                 initialDelaySeconds:
@@ -155,7 +155,7 @@ spec:
                   maximum: 65535
                 path:
                   type: string
-                  pattern: '^/'
+                  pattern: '^/\S*$'
                   maxLength: 1024
                   default: /health
                 initialDelaySeconds:
@@ -197,7 +197,7 @@ spec:
                   maximum: 65535
                 path:
                   type: string
-                  pattern: '^/'
+                  pattern: '^/\S*$'
                   maxLength: 1024
                   default: /health
                 initialDelaySeconds:

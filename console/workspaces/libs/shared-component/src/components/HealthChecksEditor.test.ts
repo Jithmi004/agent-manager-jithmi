@@ -19,6 +19,7 @@
 import { describe, expect, it } from "vitest";
 import type { HealthChecks } from "@agent-management-platform/types";
 import {
+  livenessWarning,
   toHealthChecksForm,
   toHealthChecksPayload,
   validateHealthChecksForm,
@@ -91,14 +92,22 @@ describe("toHealthChecksPayload", () => {
 
   it("leaves out empty wait times instead of sending null", () => {
     const form = toHealthChecksForm(DEFAULT_HEALTH_CHECKS);
-    // Cleared, then the check was turned off, so validation does not stop it.
-    form.liveness = { ...form.liveness, enabled: false, timeoutSeconds: NaN };
+    form.readiness = { ...form.readiness, timeoutSeconds: NaN };
 
     const payload = toHealthChecksPayload(form);
 
-    expect(payload.liveness).not.toHaveProperty("timeoutSeconds");
-    expect(payload.liveness?.periodSeconds).toBe(10);
+    expect(payload.readiness).not.toHaveProperty("timeoutSeconds");
+    expect(payload.readiness?.periodSeconds).toBe(5);
     expect(JSON.stringify(payload)).not.toContain("null");
+  });
+
+  it("sends only that a check is off, not its unvalidated values", () => {
+    const form = toHealthChecksForm(DEFAULT_HEALTH_CHECKS);
+    // Out of range, but the check is off, so validation does not stop it.
+    form.liveness = { ...form.liveness, enabled: false, periodSeconds: 0, path: "bad path" };
+
+    expect(validateHealthChecksForm(form)).toEqual({});
+    expect(toHealthChecksPayload(form).liveness).toEqual({ enabled: false });
   });
 
   it("sends a set port and a trimmed path", () => {
@@ -121,6 +130,19 @@ describe("validateHealthChecksForm", () => {
     form.readiness = { ...form.readiness, type: "http", path: "health" };
 
     expect(validateHealthChecksForm(form).readiness?.path).toBe("Path must start with /");
+  });
+
+  it("rejects a path with a space or over 1024 characters", () => {
+    const form = toHealthChecksForm(DEFAULT_HEALTH_CHECKS);
+    form.readiness = { ...form.readiness, type: "http", path: "/he alth" };
+    form.liveness = {
+      ...form.liveness, enabled: true, type: "http", path: "/" + "a".repeat(1024),
+    };
+
+    const errors = validateHealthChecksForm(form);
+
+    expect(errors.readiness?.path).toBe("Path must not contain spaces");
+    expect(errors.liveness?.path).toBe("Path must be at most 1024 characters");
   });
 
   it("rejects a port out of range and an empty wait time", () => {
@@ -158,5 +180,25 @@ describe("validateHealthChecksForm", () => {
     form.liveness = { ...form.liveness, enabled: false, periodSeconds: 0 };
 
     expect(validateHealthChecksForm(form)).toEqual({});
+  });
+});
+
+describe("livenessWarning", () => {
+  it("warns when liveness is on without the startup check", () => {
+    const form = toHealthChecksForm(DEFAULT_HEALTH_CHECKS);
+    form.startup = { ...form.startup, enabled: false };
+    form.liveness = { ...form.liveness, enabled: true };
+
+    expect(livenessWarning(form)).toContain("restarted");
+  });
+
+  it("does not warn with the startup check on, or liveness off", () => {
+    const form = toHealthChecksForm(DEFAULT_HEALTH_CHECKS);
+    form.liveness = { ...form.liveness, enabled: true };
+    expect(livenessWarning(form)).toBeUndefined();
+
+    form.startup = { ...form.startup, enabled: false };
+    form.liveness = { ...form.liveness, enabled: false };
+    expect(livenessWarning(form)).toBeUndefined();
   });
 });

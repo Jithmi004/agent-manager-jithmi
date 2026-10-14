@@ -1038,8 +1038,12 @@ func (c *openChoreoClient) getEnvConfigDefaultsFromComponentType(ctx context.Con
 // getComponentTypeSpec fetches the spec of the ComponentType a component is built from — the
 // agent-api.yaml schemas and templates, including the defaults they declare.
 func (c *openChoreoClient) getComponentTypeSpec(ctx context.Context, namespaceName string, component *gen.Component) (*gen.ComponentTypeSpec, error) {
-	// The name may be prefixed with "deployment/" or similar, extract just the name part
-	ctName := component.Spec.ComponentType.Name
+	return c.getComponentTypeSpecByName(ctx, namespaceName, component.Spec.ComponentType.Name)
+}
+
+// getComponentTypeSpecByName fetches a ComponentType's spec by its name, which may be
+// prefixed with "deployment/" or similar.
+func (c *openChoreoClient) getComponentTypeSpecByName(ctx context.Context, namespaceName, ctName string) (*gen.ComponentTypeSpec, error) {
 	if parts := strings.Split(ctName, "/"); len(parts) > 1 {
 		ctName = parts[len(parts)-1]
 	}
@@ -1328,6 +1332,24 @@ func (c *openChoreoClient) currentHealthChecks(ctx context.Context, namespaceNam
 		effective = mergeMaps(effective, probesIn(*component.Spec.Parameters))
 	}
 	return decodeHealthChecks(effective)
+}
+
+// GetHealthCheckDefaults returns the `default:` values of agent-api.yaml's parameters.probes:
+// the health checks an agent gets for every field it leaves out.
+func (c *openChoreoClient) GetHealthCheckDefaults(ctx context.Context, ouID string) (*HealthChecks, error) {
+	ctSpec, err := c.getComponentTypeSpecByName(ctx, c.NamespaceFor(ouID), string(ComponentTypeInternalAgentAPI))
+	if err != nil {
+		return nil, err
+	}
+	var parametersSchema map[string]interface{}
+	if ctSpec != nil && ctSpec.Parameters != nil && ctSpec.Parameters.OpenAPIV3Schema != nil {
+		parametersSchema = *ctSpec.Parameters.OpenAPIV3Schema
+	}
+	defaults, ok := probeDefaults(parametersSchema)
+	if !ok {
+		return nil, nil //nolint:nilnil // the ComponentType defines no health checks
+	}
+	return decodeHealthChecks(defaults)
 }
 
 // getComponentRelease fetches a ComponentRelease: a frozen copy of the agent and

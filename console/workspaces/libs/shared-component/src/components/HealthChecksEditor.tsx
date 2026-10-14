@@ -17,6 +17,7 @@
  */
 
 import {
+  Alert,
   Box,
   Collapse,
   Form,
@@ -36,6 +37,7 @@ import type {
 // Bounds match the AgentHealthCheck schema in agent-manager-service.
 const MAX_SECONDS = 3600;
 const MAX_FAILURE_THRESHOLD = 1000;
+const MAX_PATH_LENGTH = 1024;
 /**
  * Longest the startup check may wait: initial delay + failures allowed x the longer of
  * interval and timeout (an attempt that times out takes its full timeout).
@@ -121,12 +123,17 @@ export function toHealthChecksForm(checks: HealthChecks): HealthChecksFormValues
 
 /**
  * Turns the editor's values into the request's healthChecks. Empty number fields
- * (NaN) are left out, so they use the agent's port or the platform default.
+ * (NaN) are left out, so they use the agent's port or the platform default. A check
+ * that is off sends only that: its other values are not validated, so they are not sent.
  */
 export function toHealthChecksPayload(form: HealthChecksFormValues): HealthChecks {
   const checks: HealthChecks = {};
   for (const name of HEALTH_CHECK_NAMES) {
     const { enabled, type, path, port, ...timings } = form[name];
+    if (!enabled) {
+      checks[name] = { enabled: false };
+      continue;
+    }
     checks[name] = { enabled, type, path: path.trim() };
     if (!Number.isNaN(port)) checks[name].port = port;
     for (const { field } of TIMING_FIELDS) {
@@ -150,6 +157,10 @@ export function validateHealthChecksForm(form: HealthChecksFormValues): HealthCh
       const path = check.path.trim();
       if (!path) checkErrors.path = "Path is required for an HTTP check";
       else if (!path.startsWith("/")) checkErrors.path = "Path must start with /";
+      else if (/\s/.test(path)) checkErrors.path = "Path must not contain spaces";
+      else if (path.length > MAX_PATH_LENGTH) {
+        checkErrors.path = `Path must be at most ${MAX_PATH_LENGTH} characters`;
+      }
     }
     for (const { field, min, max } of TIMING_FIELDS) {
       const value = check[field];
@@ -169,6 +180,21 @@ export function validateHealthChecksForm(form: HealthChecksFormValues): HealthCh
     if (Object.keys(checkErrors).length > 0) errors[name] = checkErrors;
   }
   return errors;
+}
+
+/**
+ * A warning for the liveness check, or undefined. Without the startup check, liveness
+ * starts after its own initial delay, so an agent still starting by then fails it and
+ * is restarted over and over.
+ */
+export function livenessWarning(form: HealthChecksFormValues): string | undefined {
+  if (form.startup.enabled || !form.liveness.enabled) return undefined;
+  return (
+    "The startup check is off, so this check starts after its initial delay. " +
+    "An agent that is still starting by then is restarted, again and again. " +
+    "Turn the startup check on, or give this check an initial delay longer " +
+    "than the agent takes to start."
+  );
 }
 
 /** Whether value is a whole number from min to max, inclusive. */
@@ -218,6 +244,7 @@ export function HealthChecksEditor({ value, onChange, errors, disabled }: Health
         const check = value[name];
         const checkErrors = errors[name] ?? {};
         const id = (field: string) => `health-check-${name}-${field}`;
+        const warning = name === "liveness" ? livenessWarning(value) : undefined;
         return (
           <Stack key={name} spacing={1.5}>
             <Stack direction="row" justifyContent="space-between" alignItems="center" gap={2}>
@@ -230,6 +257,7 @@ export function HealthChecksEditor({ value, onChange, errors, disabled }: Health
                 inputProps={{ "aria-label": `${CHECK_TITLES[name]} enabled` }}
               />
             </Stack>
+            {warning && <Alert severity="warning">{warning}</Alert>}
             <Collapse in={check.enabled}>
               <Box display="grid" gridTemplateColumns="1fr 1fr" gap={2}>
                 <Form.ElementWrapper label="Check type" name={id("type")}>
@@ -268,6 +296,7 @@ export function HealthChecksEditor({ value, onChange, errors, disabled }: Health
                         fullWidth
                         disabled={disabled}
                         placeholder="/health"
+                        slotProps={{ htmlInput: { maxLength: MAX_PATH_LENGTH } }}
                         value={check.path}
                         onChange={(e) => update(name, "path", e.target.value)}
                         error={!!checkErrors.path}

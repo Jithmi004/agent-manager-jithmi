@@ -1063,14 +1063,14 @@ func (c *agentController) GetAgentConfigurations(w http.ResponseWriter, r *http.
 	utils.PopulateConfigurationResponseFromAgentConfig(&configurationsResponse, envCfg)
 
 	// The health checks of the release this environment runs, shown read-only next to env vars
-	// and file mounts.
+	// and file mounts. As in GetAgent, a failed read leaves them out rather than failing the
+	// request, so the deploy page still loads.
 	healthChecks, err := c.agentService.GetAgentHealthChecks(ctx, ouID, projName, agentName, environment)
 	if err != nil {
-		log.Error("GetAgentConfigurations: failed to get health checks", "error", err)
-		handleCommonErrors(w, err, "Failed to get configurations")
-		return
+		log.Warn("GetAgentConfigurations: failed to get health checks", "error", err)
+	} else {
+		configurationsResponse.Configurations.Probes = healthChecks
 	}
-	configurationsResponse.Configurations.Probes = healthChecks
 
 	utils.WriteSuccessResponse(w, http.StatusOK, configurationsResponse)
 }

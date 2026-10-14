@@ -11681,9 +11681,9 @@ components:
               description: Port this check runs against. Defaults to the agent's endpoint port.
             path:
               type: string
-              pattern: "^/"
+              pattern: "^/\\S*$"
               maxLength: 1024
-              description: Path requested when type is http (e.g. "/health").
+              description: Path requested when type is http (e.g. "/health"). No spaces.
 
     AgentHealthChecks:
       type: object
@@ -13035,7 +13035,7 @@ components:
                 Health checks of the release this environment runs, every field
                 resolved. Read-only: they are set in the agent's build configuration
                 and apply from the next deploy. Absent for agents the platform does
-                not run (external agents).
+                not run (external agents), and when they cannot be read.
       required:
         - projectName
         - agentName

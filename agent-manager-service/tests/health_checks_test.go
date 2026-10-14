@@ -140,13 +140,34 @@ func TestCreateAgentHealthChecks(t *testing.T) {
 		require.Nil(t, ocClient.CreateComponentCalls()[0].Req.HealthChecks)
 	})
 
+	t.Run("accepts a startup check sent in part, within an hour with the defaults", func(t *testing.T) {
+		ocClient := apitestutils.CreateMockOpenChoreoClient()
+		mockCreatedAgent(ocClient)
+		app := healthChecksApp(t, ocClient)
+
+		// The issue's example: 10s + 80 x 5s = 410s.
+		rr := serveHealthChecksRequest(t, app, http.MethodPost, healthChecksAgentsURL(), createA2AAgentBody(map[string]any{
+			"startup": map[string]any{"failureThreshold": 80},
+		}))
+
+		require.Equal(t, http.StatusAccepted, rr.Code, "body: %s", rr.Body.String())
+		require.Len(t, ocClient.CreateComponentCalls(), 1)
+	})
+
 	for name, checks := range map[string]map[string]any{
 		"an HTTP path without a leading slash": {
 			"readiness": map[string]any{"type": "http", "path": "health"},
 		},
+		"an HTTP path with a space": {
+			"readiness": map[string]any{"type": "http", "path": "/he alth"},
+		},
 		"a startup window over an hour": {
 			// 10s + 400 x 10s = 4010s.
 			"startup": map[string]any{"initialDelaySeconds": 10, "periodSeconds": 10, "failureThreshold": 400},
+		},
+		"a startup check sent in part, over an hour with the defaults": {
+			// 10s + 60 x 3600s.
+			"startup": map[string]any{"periodSeconds": 3600},
 		},
 	} {
 		t.Run("rejects "+name, func(t *testing.T) {
@@ -221,12 +242,26 @@ func TestUpdateAgentBuildParametersHealthChecks(t *testing.T) {
 		require.Nil(t, ocClient.UpdateComponentBuildParametersCalls()[0].Req.HealthChecks)
 	})
 
-	t.Run("rejects a startup check with only some of its wait times", func(t *testing.T) {
+	t.Run("accepts a startup check sent in part", func(t *testing.T) {
 		ocClient := newClient()
 		app := healthChecksApp(t, ocClient)
 
+		// 10s + 80 x 5s = 410s with the defaults.
 		rr := serveHealthChecksRequest(t, app, http.MethodPut, url, body(map[string]any{
-			"startup": map[string]any{"failureThreshold": 100},
+			"startup": map[string]any{"failureThreshold": 80},
+		}))
+
+		require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+		require.Len(t, ocClient.UpdateComponentBuildParametersCalls(), 1)
+	})
+
+	t.Run("rejects a startup check that waits over an hour with the defaults", func(t *testing.T) {
+		ocClient := newClient()
+		app := healthChecksApp(t, ocClient)
+
+		// 10s + 800 x 5s = 4010s.
+		rr := serveHealthChecksRequest(t, app, http.MethodPut, url, body(map[string]any{
+			"startup": map[string]any{"failureThreshold": 800},
 		}))
 
 		require.Equal(t, http.StatusBadRequest, rr.Code, "body: %s", rr.Body.String())
@@ -267,7 +302,7 @@ func TestGetAgentConfigurationsHealthChecks(t *testing.T) {
 		require.Equal(t, "/health", resp.Configurations.Probes["readiness"]["path"])
 	})
 
-	t.Run("fails when the health checks cannot be read", func(t *testing.T) {
+	t.Run("still returns the configurations when the health checks cannot be read", func(t *testing.T) {
 		ocClient := apitestutils.CreateMockOpenChoreoClient()
 		ocClient.GetEnvHealthChecksFunc = func(ctx context.Context, ouID, componentName, environment string) (*client.HealthChecks, error) {
 			return nil, errors.New("openchoreo unavailable")
@@ -276,7 +311,8 @@ func TestGetAgentConfigurationsHealthChecks(t *testing.T) {
 
 		rr := serveHealthChecksRequest(t, app, http.MethodGet, url, nil)
 
-		require.Equal(t, http.StatusInternalServerError, rr.Code, "body: %s", rr.Body.String())
+		require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+		require.NotContains(t, rr.Body.String(), `"probes"`)
 	})
 }
 
@@ -317,20 +353,22 @@ func TestGetAgentHealthChecks(t *testing.T) {
 	})
 }
 
-// A catalog agent runs the source agent's image, so it starts with the source
-// agent's health checks unless the request sends its own.
+// A catalog agent runs the published image, so it starts with the health checks
+// published with the version, not the source agent's current ones, unless the
+// request sends its own.
 func TestCreateAgentFromKindHealthChecks(t *testing.T) {
-	seedKindVersion := func(t *testing.T) (kindName, sourceAgentName string) {
+	// seedKindVersion publishes a version with the given health checks (nil: a
+	// version published before they were recorded).
+	seedKindVersion := func(t *testing.T, healthChecks json.RawMessage) (kindName string) {
 		gdb := db.DB(context.Background())
 		kindName = fmt.Sprintf("test-kind-%s", uuid.New().String()[:5])
-		sourceAgentName = fmt.Sprintf("source-agent-%s", uuid.New().String()[:5])
 		kind := &models.AgentKind{
 			ID:          uuid.New(),
 			Name:        kindName,
 			DisplayName: "Test Kind",
 			OUID:        jwtassertion.MockOUID,
 			ProjectName: testProjName,
-			AgentName:   sourceAgentName,
+			AgentName:   fmt.Sprintf("source-agent-%s", uuid.New().String()[:5]),
 			Labels:      map[string]string{},
 			CreatedAt:   time.Now(),
 			UpdatedAt:   time.Now(),
@@ -343,11 +381,12 @@ func TestCreateAgentFromKindHealthChecks(t *testing.T) {
 			Version:      "v1",
 			ImageId:      "sha256:test-kind-image",
 			ConfigSchema: []models.KindConfigSchemaItem{},
+			HealthChecks: healthChecks,
 			CreatedAt:    time.Now(),
 		}
 		require.NoError(t, gdb.Create(kindVersion).Error)
 		t.Cleanup(func() { gdb.Delete(kindVersion) })
-		return kindName, sourceAgentName
+		return kindName
 	}
 	newClient := func() *clientmocks.OpenChoreoClientMock {
 		ocClient := apitestutils.CreateMockOpenChoreoClient()
@@ -357,8 +396,11 @@ func TestCreateAgentFromKindHealthChecks(t *testing.T) {
 		ocClient.EnsureReleaseAndBindingFunc = func(ctx context.Context, ouID, projectName, componentName, environment string, envOverrides []client.EnvVar, fileOverrides []client.FileVar, traitEnvConfigs, componentTypeConfigs map[string]interface{}) error {
 			return nil
 		}
+		// The source agent has since moved readiness to TCP; agents from the
+		// version must not follow.
 		ocClient.GetEnvHealthChecksFunc = func(ctx context.Context, ouID, componentName, environment string) (*client.HealthChecks, error) {
-			return readinessOverHTTP(), nil
+			checkType := "tcp"
+			return &client.HealthChecks{Readiness: &client.HealthCheck{Type: &checkType}}, nil
 		}
 		return ocClient
 	}
@@ -377,25 +419,35 @@ func TestCreateAgentFromKindHealthChecks(t *testing.T) {
 		return b
 	}
 	url := fmt.Sprintf("/api/v1/orgs/%s/projects/%s/agents", testOrgName, testProjName)
+	published := json.RawMessage(`{"readiness": {"enabled": true, "type": "http", "path": "/health"}}`)
 
-	t.Run("starts with the source agent's health checks", func(t *testing.T) {
-		kindName, sourceAgentName := seedKindVersion(t)
+	t.Run("starts with the health checks published with the version", func(t *testing.T) {
+		kindName := seedKindVersion(t, published)
 		ocClient := newClient()
 		app := healthChecksApp(t, ocClient)
 
 		rr := serveHealthChecksRequest(t, app, http.MethodPost, url, body(kindName, nil))
 
 		require.Equal(t, http.StatusAccepted, rr.Code, "body: %s", rr.Body.String())
-		require.Len(t, ocClient.GetEnvHealthChecksCalls(), 1)
-		call := ocClient.GetEnvHealthChecksCalls()[0]
-		require.Equal(t, sourceAgentName, call.ComponentName)
-		require.Empty(t, call.Environment, "the source agent's current checks, not a release's")
+		require.Empty(t, ocClient.GetEnvHealthChecksCalls(), "not the source agent's current health checks")
 		require.Len(t, ocClient.CreateComponentCalls(), 1)
 		require.Equal(t, readinessOverHTTP(), ocClient.CreateComponentCalls()[0].Req.HealthChecks)
 	})
 
-	t.Run("health checks sent replace the source agent's", func(t *testing.T) {
-		kindName, _ := seedKindVersion(t)
+	t.Run("a version published before health checks were recorded gets the defaults", func(t *testing.T) {
+		kindName := seedKindVersion(t, nil)
+		ocClient := newClient()
+		app := healthChecksApp(t, ocClient)
+
+		rr := serveHealthChecksRequest(t, app, http.MethodPost, url, body(kindName, nil))
+
+		require.Equal(t, http.StatusAccepted, rr.Code, "body: %s", rr.Body.String())
+		require.Len(t, ocClient.CreateComponentCalls(), 1)
+		require.Nil(t, ocClient.CreateComponentCalls()[0].Req.HealthChecks)
+	})
+
+	t.Run("health checks sent replace the published ones", func(t *testing.T) {
+		kindName := seedKindVersion(t, published)
 		ocClient := newClient()
 		app := healthChecksApp(t, ocClient)
 
@@ -404,9 +456,9 @@ func TestCreateAgentFromKindHealthChecks(t *testing.T) {
 		}))
 
 		require.Equal(t, http.StatusAccepted, rr.Code, "body: %s", rr.Body.String())
-		require.Empty(t, ocClient.GetEnvHealthChecksCalls())
 		require.Len(t, ocClient.CreateComponentCalls(), 1)
 		checks := ocClient.CreateComponentCalls()[0].Req.HealthChecks
 		require.Equal(t, "tcp", *checks.Readiness.Type)
+		require.Nil(t, checks.Readiness.Path)
 	})
 }

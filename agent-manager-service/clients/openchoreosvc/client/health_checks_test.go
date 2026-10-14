@@ -175,3 +175,15 @@ func TestGetEnvHealthChecks_NothingDeployedInTheEnvironment(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, checks)
 }
+
+func TestGetHealthCheckDefaults(t *testing.T) {
+	c := newTestClient(t, healthCheckAPI(t, "dev"))
+
+	checks, err := c.GetHealthCheckDefaults(context.Background(), "acme")
+
+	require.NoError(t, err)
+	require.NotNil(t, checks)
+	assert.Equal(t, int32(60), *checks.Startup.FailureThreshold, "the ComponentType's default, not my-agent's 80")
+	assert.Equal(t, int32(5), *checks.Startup.PeriodSeconds)
+	assert.False(t, *checks.Liveness.Enabled)
+}

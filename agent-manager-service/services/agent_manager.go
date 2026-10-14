@@ -18,6 +18,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -1367,6 +1368,10 @@ func paginateSlice[T any](items []T, offset, limit int32) []T {
 }
 
 func (s *agentManagerService) CreateAgent(ctx context.Context, ouID string, projectName string, req *spec.CreateAgentRequest) error {
+	if err := s.checkStartupWindow(ctx, ouID, req.HealthChecks); err != nil {
+		return err
+	}
+
 	var requestedVersion *string
 	autoInstr := true
 	if req.Configurations != nil {
@@ -1444,13 +1449,15 @@ func (s *agentManagerService) CreateAgent(ctx context.Context, ouID string, proj
 			}
 		}
 		// Health checks describe the app in the image, like the port above, so a
-		// catalog agent starts with the source agent's unless the wizard sends its own.
-		if req.HealthChecks == nil {
-			inherited, err := s.GetAgentHealthChecks(ctx, ouID, kindVersion.Kind.ProjectName, kindVersion.Kind.AgentName, "")
-			if err != nil {
-				return fmt.Errorf("failed to resolve kind version health checks: %w", err)
+		// catalog agent starts with the ones published with the version unless the
+		// wizard sends its own. A version published before they were recorded has
+		// none, and its image dates from the platform defaults, so it gets those.
+		if req.HealthChecks == nil && len(kindVersion.HealthChecks) > 0 {
+			var published client.HealthChecks
+			if err := json.Unmarshal(kindVersion.HealthChecks, &published); err != nil {
+				return fmt.Errorf("failed to read kind version health checks: %w", err)
 			}
-			req.HealthChecks = inherited
+			req.HealthChecks = convertClientHealthChecksToSpec(&published)
 		}
 		imageID = kindVersion.ImageId
 	}
@@ -2183,6 +2190,10 @@ func (s *agentManagerService) UpdateAgentBuildParameters(ctx context.Context, ou
 				return nil, err
 			}
 		}
+	}
+
+	if err := s.checkStartupWindow(ctx, ouID, req.HealthChecks); err != nil {
+		return nil, err
 	}
 
 	// Update agent build parameters in OpenChoreo
@@ -6102,6 +6113,46 @@ func (s *agentManagerService) GetAgentHealthChecks(ctx context.Context, ouID, pr
 		return nil, nil //nolint:nilnil // the agent's ComponentType defines no health checks, which is not an error
 	}
 	return convertClientHealthChecksToSpec(checks), nil
+}
+
+// checkStartupWindow checks that the startup check sent gives up within
+// utils.MaxStartupWindowSeconds, with the platform defaults filled in for the wait
+// times left out (sending just failureThreshold is fine).
+func (s *agentManagerService) checkStartupWindow(ctx context.Context, ouID string, checks *spec.AgentHealthChecks) error {
+	if checks == nil || checks.Startup == nil || (checks.Startup.Enabled != nil && !*checks.Startup.Enabled) {
+		return nil
+	}
+	sent := checks.Startup
+	if sent.InitialDelaySeconds == nil && sent.PeriodSeconds == nil && sent.TimeoutSeconds == nil && sent.FailureThreshold == nil {
+		return nil // the defaults, which are within the limit
+	}
+	defaults, err := s.ocClient.GetHealthCheckDefaults(ctx, ouID)
+	if err != nil {
+		return fmt.Errorf("failed to read health check defaults: %w", err)
+	}
+	var startupDefaults client.ProbeTimings
+	if defaults != nil && defaults.Startup != nil {
+		startupDefaults = defaults.Startup.ProbeTimings
+	}
+	valueOr := func(v, def *int32) int32 {
+		switch {
+		case v != nil:
+			return *v
+		case def != nil:
+			return *def
+		default:
+			return 0
+		}
+	}
+	if err := utils.ValidateStartupWindow(
+		valueOr(sent.InitialDelaySeconds, startupDefaults.InitialDelaySeconds),
+		valueOr(sent.PeriodSeconds, startupDefaults.PeriodSeconds),
+		valueOr(sent.TimeoutSeconds, startupDefaults.TimeoutSeconds),
+		valueOr(sent.FailureThreshold, startupDefaults.FailureThreshold),
+	); err != nil {
+		return utils.NewValidationError("Invalid health checks", err.Error())
+	}
+	return nil
 }
 
 // convertClientHealthChecksToSpec maps the client's health checks to the API type.

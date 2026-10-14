@@ -17,6 +17,7 @@
 package utils
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -66,40 +67,58 @@ func TestValidateHealthChecks(t *testing.T) {
 			wantErr: "startup timeoutSeconds must be between 1 and 3600",
 		},
 		{
-			// With the defaults (10s delay, 60 failures) this would be 10s + 3600s x 60.
-			name:    "startup window fields sent only in part",
-			checks:  &spec.AgentHealthChecks{Startup: &spec.AgentHealthCheck{PeriodSeconds: healthCheckInt32(3600)}},
-			wantErr: "startup initialDelaySeconds, periodSeconds and failureThreshold must be set together",
+			name:    "path with a space",
+			checks:  &spec.AgentHealthChecks{Readiness: &spec.AgentHealthCheck{Type: str("http"), Path: str("/he alth")}},
+			wantErr: "readiness path must not contain spaces",
 		},
 		{
-			name:   "startup window fields may be left out of a startup check that is off",
-			checks: &spec.AgentHealthChecks{Startup: &spec.AgentHealthCheck{Enabled: spec.PtrBool(false), PeriodSeconds: healthCheckInt32(3600)}},
+			name:    "path too long",
+			checks:  &spec.AgentHealthChecks{Liveness: &spec.AgentHealthCheck{Path: str("/" + strings.Repeat("a", 1024))}},
+			wantErr: "liveness path must be at most 1024 characters",
 		},
 		{
-			name:   "startup window fields all left out use the defaults",
-			checks: &spec.AgentHealthChecks{Startup: &spec.AgentHealthCheck{Type: str("http"), Path: str("/ready")}},
-		},
-		{
-			// 10s + 60 x 100s (the timeout, longer than the 5s interval) = 6010s.
-			name: "startup window over an hour because of a long timeout",
-			checks: &spec.AgentHealthChecks{Startup: &spec.AgentHealthCheck{
-				InitialDelaySeconds: healthCheckInt32(10), PeriodSeconds: healthCheckInt32(5),
-				TimeoutSeconds: healthCheckInt32(100), FailureThreshold: healthCheckInt32(60),
-			}},
-			wantErr: "startup check would wait up to 6010 seconds",
-		},
-		{
-			// 10s + 10s x 400 = 4010s.
-			name: "startup window over an hour",
-			checks: &spec.AgentHealthChecks{Startup: &spec.AgentHealthCheck{
-				InitialDelaySeconds: healthCheckInt32(10), PeriodSeconds: healthCheckInt32(10), FailureThreshold: healthCheckInt32(400),
-			}},
-			wantErr: "startup check would wait up to 4010 seconds",
+			// The startup limit needs the defaults, so the service checks it.
+			name:   "startup wait times sent in part",
+			checks: &spec.AgentHealthChecks{Startup: &spec.AgentHealthCheck{FailureThreshold: healthCheckInt32(80)}},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := ValidateHealthChecks(tt.checks)
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
+func TestValidateStartupWindow(t *testing.T) {
+	tests := []struct {
+		name                             string
+		delay, period, timeout, failures int32
+		wantErr                          string
+	}{
+		// The defaults: 10s + 60 x 5s = 310s.
+		{name: "the defaults", delay: 10, period: 5, timeout: 1, failures: 60},
+		// The issue's example: failures allowed raised to 80, 10s + 80 x 5s = 410s.
+		{name: "more failures allowed", delay: 10, period: 5, timeout: 1, failures: 80},
+		{name: "exactly an hour", delay: 0, period: 10, timeout: 1, failures: 360},
+		{
+			name: "over an hour", delay: 10, period: 10, timeout: 1, failures: 400,
+			wantErr: "startup check would wait up to 4010 seconds",
+		},
+		{
+			// 10s + 60 x 100s (the timeout, longer than the 5s interval) = 6010s.
+			name: "over an hour because of a long timeout", delay: 10, period: 5, timeout: 100, failures: 60,
+			wantErr: "startup check would wait up to 6010 seconds",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateStartupWindow(tt.delay, tt.period, tt.timeout, tt.failures)
 			if tt.wantErr == "" {
 				assert.NoError(t, err)
 				return

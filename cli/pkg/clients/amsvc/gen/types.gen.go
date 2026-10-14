@@ -1329,7 +1329,7 @@ type AgentHealthCheck struct {
 	// InitialDelaySeconds Seconds after the container starts before the first check.
 	InitialDelaySeconds *int32 `json:"initialDelaySeconds,omitempty"`
 
-	// Path Path requested when type is http (e.g. "/health").
+	// Path Path requested when type is http (e.g. "/health"). No spaces.
 	Path *string `json:"path,omitempty"`
 
 	// PeriodSeconds Seconds between checks.

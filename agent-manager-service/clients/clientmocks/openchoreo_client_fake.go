@@ -123,6 +123,9 @@ import (
 //			GetEnvironmentFunc: func(ctx context.Context, ouID string, environmentName string) (*models.EnvironmentResponse, error) {
 //				panic("mock out the GetEnvironment method")
 //			},
+//			GetHealthCheckDefaultsFunc: func(ctx context.Context, ouID string) (*client.HealthChecks, error) {
+//				panic("mock out the GetHealthCheckDefaults method")
+//			},
 //			GetOrganizationFunc: func(ctx context.Context, ouID string) (*models.OrganizationResponse, error) {
 //				panic("mock out the GetOrganization method")
 //			},
@@ -366,6 +369,9 @@ type OpenChoreoClientMock struct {
 
 	// GetEnvironmentFunc mocks the GetEnvironment method.
 	GetEnvironmentFunc func(ctx context.Context, ouID string, environmentName string) (*models.EnvironmentResponse, error)
+
+	// GetHealthCheckDefaultsFunc mocks the GetHealthCheckDefaults method.
+	GetHealthCheckDefaultsFunc func(ctx context.Context, ouID string) (*client.HealthChecks, error)
 
 	// GetOrganizationFunc mocks the GetOrganization method.
 	GetOrganizationFunc func(ctx context.Context, ouID string) (*models.OrganizationResponse, error)
@@ -889,6 +895,13 @@ type OpenChoreoClientMock struct {
 			OuID string
 			// EnvironmentName is the environmentName argument value.
 			EnvironmentName string
+		}
+		// GetHealthCheckDefaults holds details about calls to the GetHealthCheckDefaults method.
+		GetHealthCheckDefaults []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// OuID is the ouID argument value.
+			OuID string
 		}
 		// GetOrganization holds details about calls to the GetOrganization method.
 		GetOrganization []struct {
@@ -1422,6 +1435,7 @@ type OpenChoreoClientMock struct {
 	lockGetEnvHealthChecks                     sync.RWMutex
 	lockGetEnvResourceConfigs                  sync.RWMutex
 	lockGetEnvironment                         sync.RWMutex
+	lockGetHealthCheckDefaults                 sync.RWMutex
 	lockGetOrganization                        sync.RWMutex
 	lockGetProject                             sync.RWMutex
 	lockGetProjectDeploymentPipeline           sync.RWMutex
@@ -3013,6 +3027,42 @@ func (mock *OpenChoreoClientMock) GetEnvironmentCalls() []struct {
 	mock.lockGetEnvironment.RLock()
 	calls = mock.calls.GetEnvironment
 	mock.lockGetEnvironment.RUnlock()
+	return calls
+}
+
+// GetHealthCheckDefaults calls GetHealthCheckDefaultsFunc.
+func (mock *OpenChoreoClientMock) GetHealthCheckDefaults(ctx context.Context, ouID string) (*client.HealthChecks, error) {
+	if mock.GetHealthCheckDefaultsFunc == nil {
+		panic("OpenChoreoClientMock.GetHealthCheckDefaultsFunc: method is nil but OpenChoreoClient.GetHealthCheckDefaults was just called")
+	}
+	callInfo := struct {
+		Ctx  context.Context
+		OuID string
+	}{
+		Ctx:  ctx,
+		OuID: ouID,
+	}
+	mock.lockGetHealthCheckDefaults.Lock()
+	mock.calls.GetHealthCheckDefaults = append(mock.calls.GetHealthCheckDefaults, callInfo)
+	mock.lockGetHealthCheckDefaults.Unlock()
+	return mock.GetHealthCheckDefaultsFunc(ctx, ouID)
+}
+
+// GetHealthCheckDefaultsCalls gets all the calls that were made to GetHealthCheckDefaults.
+// Check the length with:
+//
+//	len(mockedOpenChoreoClient.GetHealthCheckDefaultsCalls())
+func (mock *OpenChoreoClientMock) GetHealthCheckDefaultsCalls() []struct {
+	Ctx  context.Context
+	OuID string
+} {
+	var calls []struct {
+		Ctx  context.Context
+		OuID string
+	}
+	mock.lockGetHealthCheckDefaults.RLock()
+	calls = mock.calls.GetHealthCheckDefaults
+	mock.lockGetHealthCheckDefaults.RUnlock()
 	return calls
 }
 
