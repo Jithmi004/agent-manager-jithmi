@@ -834,8 +834,8 @@ export function ConfigureBuildDrawer({
                 <CardContent sx={{ gap: 1, display: "flex", flexDirection: "column" }}>
                   <Typography variant="h5">Health Checks</Typography>
                   <Typography variant="body2" color="text.secondary">
-                    How the platform checks that your agent is up. Changes apply from the next
-                    deployment. Wait times can also be changed per environment.
+                    How the platform checks that your agent is up. The same checks apply in
+                    every environment, from its next deployment.
                   </Typography>
                   <HealthChecksEditor
                     value={healthChecks}
