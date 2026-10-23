@@ -113,3 +113,50 @@ the controller rather than by Helm.
 {{- printf "%s.${metadata.componentNamespace}-${metadata.environmentName}" $svc -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+amp.healthChecksWorkflowParameter is the healthChecks build parameter shared by the
+amp-* build workflows. Configure Build writes it next to endpoints, so each
+WorkflowRun keeps its own copy, and generate-workload Step 7 writes it onto the
+first-environment ReleaseBinding. Its shape must match the HealthChecks $defs in
+component-types/agent-api.yaml, which validates it again at render time.
+
+Only the top level has a default. A nested default would make an unset probe look
+configured, and an unset probe must render the legacy literal probe.
+*/}}
+{{- define "amp.healthChecksWorkflowParameter" -}}
+healthChecks:
+  type: object
+  default: {}
+  description: "Startup, readiness and liveness checks recorded with this build"
+  properties:
+{{- range list "startup" "readiness" "liveness" }}
+    {{ . }}:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        type:
+          type: string
+          enum: [TCP, HTTP]
+        path:
+          type: string
+          pattern: "^/"
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        initialDelaySeconds:
+          type: integer
+          minimum: 0
+        periodSeconds:
+          type: integer
+          minimum: 1
+        timeoutSeconds:
+          type: integer
+          minimum: 1
+        failureThreshold:
+          type: integer
+          minimum: 1
+{{- end }}
+{{- end -}}

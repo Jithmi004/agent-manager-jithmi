@@ -113,6 +113,48 @@ spec:
               type: integer
               default: 5
               minimum: 1
+        # No defaults given. A probe whose key is absent
+        # renders the legacy literal probe in the template, so an agent whose
+        # binding predates health checks keeps a byte-identical pod spec and is
+        # not restarted. A schema default would make every key present.
+        HealthCheck:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            type:
+              type: string
+              enum:
+                - TCP
+                - HTTP
+            path:
+              type: string
+              pattern: "^/"
+            port:
+              type: integer
+              minimum: 1
+              maximum: 65535
+            initialDelaySeconds:
+              type: integer
+              minimum: 0
+            periodSeconds:
+              type: integer
+              minimum: 1
+            timeoutSeconds:
+              type: integer
+              minimum: 1
+            failureThreshold:
+              type: integer
+              minimum: 1
+        HealthChecks:
+          type: object
+          properties:
+            startup:
+              $ref: "#/$defs/HealthCheck"
+            readiness:
+              $ref: "#/$defs/HealthCheck"
+            liveness:
+              $ref: "#/$defs/HealthCheck"
       properties:
         replicas:
           type: integer
@@ -135,6 +177,12 @@ spec:
           default: ""
         autoscaling:
           $ref: "#/$defs/AutoscalingConfig"
+        # Health checks belong to a build, not to an environment: whatever pins
+        # this binding to a release also writes the health checks recorded with
+        # the build behind that release. It sits here only because the binding is
+        # the one object written atomically with the release pin.
+        healthChecks:
+          $ref: "#/$defs/HealthChecks"
 
   resources:
     - id: sandbox-template
@@ -197,17 +245,70 @@ spec:
                     limits:
                       cpu: ${environmentConfigs.resources.limits.?cpu.orValue(parameters.resources.limits.cpu)}
                       memory: ${environmentConfigs.resources.limits.?memory.orValue(parameters.resources.limits.memory)}
-                  startupProbe:
-                    tcpSocket:
-                      port: ${workload.endpoints.transformList(name, ep, [ep.port]).flatten()[0]}
-                    periodSeconds: 5
-                    failureThreshold: 60
-                    initialDelaySeconds: 10
-                  readinessProbe:
-                    tcpSocket:
-                      port: ${workload.endpoints.transformList(name, ep, [ep.port]).flatten()[0]}
-                    periodSeconds: 5
-                    failureThreshold: 6
+                  # Each probe has three outcomes:
+                  #   - key absent: the legacy literal probe, unchanged from before
+                  #     health checks were configurable. This branch is load-bearing:
+                  #     it keeps existing agents' pod spec byte-identical, so do not
+                  #     replace it with the configured branch plus defaults (that
+                  #     would add timeoutSeconds and restart every agent).
+                  #   - enabled: false: no probe.
+                  #   - otherwise: the configured probe, with unset fields falling back
+                  #     to the legacy values and the port to the agent's endpoint port.
+                  # [x].map(c, ...)[0] only binds the probe config to a short name.
+                  startupProbe: |
+                    ${!environmentConfigs.?healthChecks.?startup.hasValue()
+                      ? {
+                          "tcpSocket": {"port": workload.endpoints.transformList(name, ep, [ep.port]).flatten()[0]},
+                          "periodSeconds": 5,
+                          "failureThreshold": 60,
+                          "initialDelaySeconds": 10
+                        }
+                      : !environmentConfigs.healthChecks.startup.?enabled.orValue(true)
+                        ? oc_omit()
+                        : [environmentConfigs.healthChecks.startup].map(c, oc_merge(
+                            c.?type.orValue("TCP") == "HTTP"
+                              ? {"httpGet": {"path": c.?path.orValue("/"), "port": c.?port.orValue(workload.endpoints.transformList(name, ep, [ep.port]).flatten()[0])}}
+                              : {"tcpSocket": {"port": c.?port.orValue(workload.endpoints.transformList(name, ep, [ep.port]).flatten()[0])}},
+                            {
+                              "initialDelaySeconds": c.?initialDelaySeconds.orValue(10),
+                              "periodSeconds": c.?periodSeconds.orValue(5),
+                              "timeoutSeconds": c.?timeoutSeconds.orValue(1),
+                              "failureThreshold": c.?failureThreshold.orValue(60)
+                            }))[0]}
+                  readinessProbe: |
+                    ${!environmentConfigs.?healthChecks.?readiness.hasValue()
+                      ? {
+                          "tcpSocket": {"port": workload.endpoints.transformList(name, ep, [ep.port]).flatten()[0]},
+                          "periodSeconds": 5,
+                          "failureThreshold": 6
+                        }
+                      : !environmentConfigs.healthChecks.readiness.?enabled.orValue(true)
+                        ? oc_omit()
+                        : [environmentConfigs.healthChecks.readiness].map(c, oc_merge(
+                            c.?type.orValue("TCP") == "HTTP"
+                              ? {"httpGet": {"path": c.?path.orValue("/"), "port": c.?port.orValue(workload.endpoints.transformList(name, ep, [ep.port]).flatten()[0])}}
+                              : {"tcpSocket": {"port": c.?port.orValue(workload.endpoints.transformList(name, ep, [ep.port]).flatten()[0])}},
+                            {
+                              "initialDelaySeconds": c.?initialDelaySeconds.orValue(0),
+                              "periodSeconds": c.?periodSeconds.orValue(5),
+                              "timeoutSeconds": c.?timeoutSeconds.orValue(1),
+                              "failureThreshold": c.?failureThreshold.orValue(6)
+                            }))[0]}
+                  # No liveness probe unless one is configured and enabled; the
+                  # configured fallbacks are the Kubernetes defaults.
+                  livenessProbe: |
+                    ${!environmentConfigs.?healthChecks.?liveness.hasValue() || !environmentConfigs.healthChecks.liveness.?enabled.orValue(true)
+                      ? oc_omit()
+                      : [environmentConfigs.healthChecks.liveness].map(c, oc_merge(
+                          c.?type.orValue("TCP") == "HTTP"
+                            ? {"httpGet": {"path": c.?path.orValue("/"), "port": c.?port.orValue(workload.endpoints.transformList(name, ep, [ep.port]).flatten()[0])}}
+                            : {"tcpSocket": {"port": c.?port.orValue(workload.endpoints.transformList(name, ep, [ep.port]).flatten()[0])}},
+                          {
+                            "initialDelaySeconds": c.?initialDelaySeconds.orValue(0),
+                            "periodSeconds": c.?periodSeconds.orValue(10),
+                            "timeoutSeconds": c.?timeoutSeconds.orValue(1),
+                            "failureThreshold": c.?failureThreshold.orValue(3)
+                          }))[0]}
                   env: ${dependencies.toContainerEnvs()}
                   envFrom: ${configurations.toContainerEnvFrom()}
                   volumeMounts: |

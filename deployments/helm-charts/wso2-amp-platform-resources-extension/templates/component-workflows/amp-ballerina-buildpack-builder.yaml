@@ -149,6 +149,7 @@ spec:
                       key:
                         type: string
                         description: "Key within the secret"
+        {{- include "amp.healthChecksWorkflowParameter" . | nindent 8 }}
 
   runTemplate:
     apiVersion: argoproj.io/v1alpha1
@@ -215,6 +216,8 @@ spec:
             value: ${parameters.environmentVariables}
           - name: file-mounts
             value: ${parameters.fileMounts}
+          - name: health-checks
+            value: ${parameters.healthChecks}
           - name: build-env
             value: ${parameters.buildEnv}
       serviceAccountName: workflow-sa
@@ -260,6 +263,8 @@ spec:
                       value: '{{ "{{" }}workflow.parameters.workflowrun-name{{ "}}" }}'
                     - name: workload-publisher-secret-name
                       value: '{{ "{{" }}workflow.parameters.workload-publisher-secret-name{{ "}}" }}'
+                    - name: health-checks
+                      value: '{{ "{{" }}workflow.parameters.health-checks{{ "}}" }}'
       volumeClaimTemplates:
         - metadata:
             name: workspace

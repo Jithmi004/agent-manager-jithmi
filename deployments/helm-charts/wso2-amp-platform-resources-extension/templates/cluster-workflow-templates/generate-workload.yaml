@@ -10,6 +10,14 @@ spec:
           - name: image
           - name: run-name
           - name: workload-publisher-secret-name
+          # An input with a default rather than a workflow.parameters reference:
+          # Argo refuses to start a workflow whose templates reference a workflow
+          # parameter it does not declare, so a reference here would fail every
+          # build submitted by a workflow that predates health checks (e.g. one
+          # applied a moment before this template during a chart upgrade). The
+          # default means "this build has none".
+          - name: health-checks
+            default: "{}"
           # --- IDP / OAuth Configuration ---
           - name: oauth-token-url
             default: {{ .Values.global.oauth.tokenUrl | quote }}
@@ -56,6 +64,8 @@ spec:
             value: '{{ "{{" }}workflow.parameters.environment-variables{{ "}}" }}'
           - name: FILE_MOUNTS
             value: '{{ "{{" }}workflow.parameters.file-mounts{{ "}}" }}'
+          - name: HEALTH_CHECKS
+            value: '{{ "{{" }}inputs.parameters.health-checks{{ "}}" }}'
           - name: RUN_NAME
             value: '{{ "{{" }}inputs.parameters.run-name{{ "}}" }}'
           - name: OAUTH_URL
@@ -89,6 +99,15 @@ spec:
             if [ -z "$ENV_VARS" ] || [ "$ENV_VARS" = "null" ]; then ENV_VARS='[]'; fi
             if [ -z "$FILE_MOUNTS" ] || [ "$FILE_MOUNTS" = "null" ]; then FILE_MOUNTS='[]'; fi
             if [ -z "$ENDPOINTS" ] || [ "$ENDPOINTS" = "null" ]; then ENDPOINTS='[]'; fi
+            # Unset or empty means "this build has none", which Step 7 turns into
+            # removing the key from the binding.
+            case "$HEALTH_CHECKS" in
+              ""|null|"{}") HEALTH_CHECKS='null' ;;
+            esac
+            if ! printf '%s' "$HEALTH_CHECKS" | jq -e 'type == "object" or . == null' >/dev/null; then
+              echo "Error: health checks parameter is not a JSON object"
+              exit 1
+            fi
 
             # An endpoint name becomes a key in the Workload CR, so a repeated name
             # would drop every earlier endpoint that shares it. Fail instead.
@@ -454,7 +473,8 @@ spec:
                   --arg componentName "$COMPONENT_NAME" \
                   --arg environment "$FIRST_ENV" \
                   --arg releaseName "$RELEASE_NAME" \
-                  --slurpfile overrides "$OUT_OVERRIDES_JSON" '
+                  --slurpfile overrides "$OUT_OVERRIDES_JSON" \
+                  --argjson healthChecks "$HEALTH_CHECKS" '
                     {
                       metadata: { name: $name, namespace: $namespace },
                       spec: (
@@ -464,6 +484,9 @@ spec:
                           releaseName: $releaseName
                         }
                         + (if $overrides[0] != null then { workloadOverrides: $overrides[0] } else {} end)
+                        + (if $healthChecks != null
+                           then { componentTypeEnvironmentConfigs: { healthChecks: $healthChecks } }
+                           else {} end)
                       )
                     }
                   ' > /mnt/vol/releasebinding.json
@@ -475,14 +498,25 @@ spec:
                   -H "Authorization: Bearer ${ACCESS_TOKEN}" \
                   -d @/mnt/vol/releasebinding.json)
               elif [ "${BINDING_GET_HTTP_CODE}" -ge 200 ] && [ "${BINDING_GET_HTTP_CODE}" -lt 300 ]; then
-                # Only the release pin is advanced. Once the binding exists it owns the
-                # environment's configuration, which the backend edits directly; a
-                # rebuild must not roll that back to whatever the component-level
-                # parameters happened to hold.
+                # Only the release pin and this build's health checks change. Once the
+                # binding exists it owns the environment's configuration, which the
+                # backend edits directly; a rebuild must not roll that back to whatever
+                # the component-level parameters happened to hold.
+                #
+                # Health checks are the exception because they belong to the build, not
+                # the environment: they are written in the same update as the pin, so
+                # the binding never pairs one build's release with another build's
+                # checks. A build without health checks removes the key, so the binding
+                # renders the default probes rather than an earlier build's.
                 echo "Updating ReleaseBinding ${BINDING_NAME} to release ${RELEASE_NAME}..."
                 printf '%s' "${BINDING_GET_BODY}" > /mnt/vol/releasebinding-get.json
-                jq -c --arg releaseName "$RELEASE_NAME" '.spec.releaseName = $releaseName' \
-                  /mnt/vol/releasebinding-get.json > /mnt/vol/releasebinding.json
+                jq -c --arg releaseName "$RELEASE_NAME" --argjson healthChecks "$HEALTH_CHECKS" '
+                    .spec.releaseName = $releaseName
+                    | if $healthChecks != null
+                      then .spec.componentTypeEnvironmentConfigs.healthChecks = $healthChecks
+                      else del(.spec.componentTypeEnvironmentConfigs.healthChecks)
+                      end
+                  ' /mnt/vol/releasebinding-get.json > /mnt/vol/releasebinding.json
 
                 BINDING_RESPONSE=$(curl -s -w "\n%{http_code}" \
                   -X PUT "${API_URL}/api/v1/namespaces/${NAMESPACE}/releasebindings/${BINDING_NAME}" \
