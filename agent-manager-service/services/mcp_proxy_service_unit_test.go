@@ -681,6 +681,10 @@ type oldMCPServerForTest struct {
 	// refuseDiscoverInJSONRPC makes it refuse server/discover with HTTP 200 and a JSON-RPC
 	// "Method not found" error, the other way an old server can refuse.
 	refuseDiscoverInJSONRPC bool
+	// discoverStatus and discoverBody, when set, make it answer server/discover with that HTTP
+	// status and body instead.
+	discoverStatus int
+	discoverBody   string
 
 	methods        []string // the JSON-RPC method of each request, in order
 	discoverHeader http.Header
@@ -702,6 +706,11 @@ func (f *oldMCPServerForTest) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	case "server/discover":
 		f.discoverHeader = r.Header.Clone()
 		f.discoverMeta = req.Params.Meta
+		if f.discoverStatus != 0 {
+			w.WriteHeader(f.discoverStatus)
+			_, _ = w.Write([]byte(f.discoverBody))
+			return
+		}
 		if f.refuseDiscoverInJSONRPC {
 			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"error":{"code":-32601,"message":"Method not found"}}`, req.ID)
 			return
@@ -843,4 +852,69 @@ func TestMCPVersionNeedsInitialize(t *testing.T) {
 	assert.False(t, mcpVersionNeedsInitialize("2026-07-28"))
 	assert.False(t, mcpVersionNeedsInitialize("2027-01-01"))
 	assert.True(t, mcpVersionNeedsInitialize(""))
+}
+
+// When server/discover fails, Agent Manager tries initialize only if the server refused the
+// method. Credential, rate-limit and server problems are reported instead: initialize would
+// fail the same way and hide the real error.
+func TestFetchMCPServerInfo_WhenToFallBackToInitialize(t *testing.T) {
+	jsonRPCError := `{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"Method not found"}}`
+	tests := []struct {
+		name           string
+		discoverStatus int
+		discoverBody   string
+		wantFallBack   bool
+		wantErrorIs    error // checked only when not falling back; nil means any error
+	}{
+		{name: "404 refuses the method", discoverStatus: 404, discoverBody: "not found", wantFallBack: true},
+		{name: "405 refuses the method", discoverStatus: 405, discoverBody: "method not allowed", wantFallBack: true},
+		{name: "500 with a JSON-RPC error refuses the method", discoverStatus: 500, discoverBody: jsonRPCError, wantFallBack: true},
+		{name: "401 is reported", discoverStatus: 401, discoverBody: "unauthorized", wantErrorIs: utils.ErrMCPServerUnauthorized},
+		{name: "403 is reported", discoverStatus: 403, discoverBody: "forbidden"},
+		{name: "429 is reported", discoverStatus: 429, discoverBody: "slow down"},
+		{name: "500 without JSON-RPC is reported", discoverStatus: 500, discoverBody: "internal error"},
+		{name: "200 that is not JSON-RPC is reported", discoverStatus: 200, discoverBody: "<html>sign in</html>"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &oldMCPServerForTest{discoverStatus: tt.discoverStatus, discoverBody: tt.discoverBody}
+			srv := httptest.NewServer(fake)
+			defer srv.Close()
+			svc := &MCPProxyService{client: srv.Client(), logger: discardLogger()}
+
+			resp, err := svc.fetchMCPServerInfo(context.Background(), srv.URL, "", "")
+
+			if tt.wantFallBack {
+				assert.NoError(t, err)
+				assert.Equal(t, []string{"server/discover", "initialize"}, fake.methods[:2])
+				if assert.NotNil(t, resp.Tools) {
+					assert.Equal(t, "greet_old", (*resp.Tools)[0]["name"])
+				}
+				return
+			}
+			assert.Error(t, err)
+			if tt.wantErrorIs != nil {
+				assert.ErrorIs(t, err, tt.wantErrorIs)
+			}
+			assert.Equal(t, []string{"server/discover"}, fake.methods, "initialize must not be sent")
+		})
+	}
+}
+
+// A server that can't be reached is reported as unreachable, without trying initialize.
+func TestFetchMCPServerInfo_UnreachableServerIsReported(t *testing.T) {
+	srv := httptest.NewServer(&oldMCPServerForTest{})
+	client := srv.Client()
+	srv.Close() // nothing listens on the URL any more
+
+	svc := &MCPProxyService{client: client, logger: discardLogger()}
+	_, err := svc.fetchMCPServerInfo(context.Background(), srv.URL, "", "")
+
+	assert.ErrorIs(t, err, utils.ErrURLUnreachable)
+}
+
+// The status error keeps the text it had before it became a type.
+func TestMCPHTTPStatusError_KeepsOldText(t *testing.T) {
+	err := &mcpHTTPStatusError{StatusCode: 403, Body: "forbidden"}
+	assert.Equal(t, "request failed with status 403: forbidden", err.Error())
 }

@@ -1667,7 +1667,10 @@ func (s *MCPProxyService) fetchMCPServerInfo(ctx context.Context, endpointURL st
 	// discover MCP server with server/discover (MCP 2026-07-28 onwards).
 	// If server answers: MCP 2026-07-28 or later. Hence no initialize.
 	// Server refuses: before MCP 2026-07-28. Connect with initialize.
-	discoverResult, serverAnsweredDiscover := s.discoverMCPServer(ctx, endpointURL, headerName, headerValue)
+	discoverResult, serverAnsweredDiscover, err := s.discoverMCPServer(ctx, endpointURL, headerName, headerValue)
+	if err != nil {
+		return nil, fmt.Errorf("failed to discover MCP server: %w", err)
+	}
 	if serverAnsweredDiscover {
 		return s.fetchToolsPromptsAndResources(ctx, endpointURL, "", headerName, headerValue, mcpSpecVersionJuly2026,
 			discoverResult.Result.Meta.ServerInfo), nil
@@ -1751,23 +1754,58 @@ func buildRequestHeaders(protocolVersion string, method string) map[string]strin
 	}
 }
 
-// discoverMCPServer sends server/discover, the first request in MCP 2026-07-28, and reports
-// whether the server answered it, with its answer.
-//
-// A new server answers with the MCP versions it supports, and this returns true. An old server
-// doesn't know the method and refuses it, and this returns false. A server can refuse in two
-// ways, and both count:
-//   - an HTTP error, e.g. 400 "Unsupported protocol version"
-//   - HTTP 200 with a JSON-RPC error in the body, e.g. -32601 "Method not found"
-func (s *MCPProxyService) discoverMCPServer(ctx context.Context, endpointURL string, headerName string, headerValue string) (mcpServerDiscoverResult, bool) {
+// discoverMCPServer sends server/discover, the first request in MCP 2026-07-28. There are three
+// outcomes:
+//   - The server answers with the MCP versions it supports: returns true.
+//   - The server refuses the method (see serverRefusedDiscoverMethod), so it is prior to
+//     MCP 2026-07-28: returns false and no error.
+//   - Any other error, e.g. 401, 403, 429, 5xx, unreachable, or a 2xx body that isn't JSON-RPC:
+//     returns the error.
+func (s *MCPProxyService) discoverMCPServer(ctx context.Context, endpointURL string, headerName string, headerValue string) (mcpServerDiscoverResult, bool, error) {
 	discoverReq := mcpJSONRPCRequest{JSONRPC: mcpJSONRPCVersion, ID: 1, Method: mcpMethodServerDiscover}
 
 	var discoverResult mcpServerDiscoverResult
 	body, err := s.postJSONRPCForVersion(ctx, endpointURL, discoverReq, "", headerName, headerValue, mcpSpecVersionJuly2026)
-	// It answered only if all three hold: no HTTP error, the body is JSON-RPC, and the body
-	// isn't a JSON-RPC error.
-	serverAnswered := err == nil && json.Unmarshal(body, &discoverResult) == nil && discoverResult.Error == nil
-	return discoverResult, serverAnswered
+	if err != nil {
+		if serverRefusedDiscoverMethod(err) {
+			return discoverResult, false, nil
+		}
+		return discoverResult, false, err
+	}
+	if err := json.Unmarshal(body, &discoverResult); err != nil {
+		return discoverResult, false, fmt.Errorf("failed to parse server/discover response: %w, body: %s", err, string(body))
+	}
+	// HTTP 200 with a JSON-RPC error, e.g. -32601 "Method not found", is also a refusal.
+	serverAnswered := discoverResult.Error == nil
+	return discoverResult, serverAnswered, nil
+}
+
+// serverRefusedDiscoverMethod reports whether a failed server/discover means "this server doesn't
+// support the method", so Agent Manager should try initialize instead.
+//
+//	401, 403, 429                       -> no: credentials or rate limit; initialize would also fail
+//	other 4xx (e.g. 400, 404, 405)      -> yes: the server refused this request
+//	5xx with a JSON-RPC error body      -> yes: the server's MCP layer refused the method
+//	other 5xx                           -> no: the server is broken
+//	unreachable, timeout, too large     -> no
+func serverRefusedDiscoverMethod(err error) bool {
+	var statusErr *mcpHTTPStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+	switch {
+	case statusErr.StatusCode == http.StatusForbidden, statusErr.StatusCode == http.StatusTooManyRequests:
+		return false
+	case statusErr.StatusCode >= 400 && statusErr.StatusCode < 500:
+		return true
+	case statusErr.StatusCode >= 500:
+		var body struct {
+			Error *mcpJSONRPCError `json:"error"`
+		}
+		return json.Unmarshal([]byte(statusErr.Body), &body) == nil && body.Error != nil
+	default:
+		return false
+	}
 }
 
 func (s *MCPProxyService) initializeMCPServer(ctx context.Context, endpointURL string, headerName string, headerValue string) (string, map[string]interface{}, error) {
@@ -1903,7 +1941,7 @@ func (s *MCPProxyService) postJSONRPC(ctx context.Context, endpointURL string, p
 		return nil, nil, utils.ErrMCPServerUnauthorized
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
+		return nil, nil, &mcpHTTPStatusError{StatusCode: resp.StatusCode, Body: string(body)}
 	}
 	if isMCPEventStream(resp) {
 		data, err := parseMCPEventStream(body)
@@ -1979,6 +2017,17 @@ type mcpJSONRPCRequest struct {
 	ID      int         `json:"id,omitempty"`
 	Method  string      `json:"method"`
 	Params  interface{} `json:"params,omitempty"`
+}
+
+// mcpHTTPStatusError is a non-2xx answer from an MCP server, other than 401 (which is
+// utils.ErrMCPServerUnauthorized). It keeps the status code so callers can decide what to do with it.
+type mcpHTTPStatusError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *mcpHTTPStatusError) Error() string {
+	return fmt.Sprintf("request failed with status %d: %s", e.StatusCode, e.Body)
 }
 
 type mcpJSONRPCError struct {
