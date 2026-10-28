@@ -26,6 +26,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -1665,15 +1666,20 @@ func policiesFromPtr(policies *[]models.MCPPolicy) []models.MCPPolicy {
 
 func (s *MCPProxyService) fetchMCPServerInfo(ctx context.Context, endpointURL string, headerName string, headerValue string) (*models.MCPServerInfoFetchResponse, error) {
 	// discover MCP server with server/discover (MCP 2026-07-28 onwards).
-	// If server answers: MCP 2026-07-28 or later. Hence no initialize.
+	// If server answers: pick the highest MCP version both sides support. 2026-07-28 or later
+	// needs no initialize. An earlier version, or none in common, still connects with initialize.
 	// Server refuses: before MCP 2026-07-28. Connect with initialize.
 	discoverResult, serverAnsweredDiscover, err := s.discoverMCPServer(ctx, endpointURL, headerName, headerValue)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover MCP server: %w", err)
 	}
 	if serverAnsweredDiscover {
-		return s.fetchToolsPromptsAndResources(ctx, endpointURL, "", headerName, headerValue, mcpSpecVersionJuly2026,
-			discoverResult.Result.Meta.ServerInfo), nil
+		protocolVersion := chooseMCPVersion(discoverResult.Result.SupportedVersions)
+		if !mcpVersionNeedsInitialize(protocolVersion) {
+			return s.fetchToolsPromptsAndResources(ctx, endpointURL, "", headerName, headerValue, protocolVersion,
+				discoverResult.Result.Meta.ServerInfo), nil
+		}
+		// if the shared version is before 2026-07-28, or there is none, still needs initialize.
 	}
 
 	sessionID, serverInfo, err := s.initializeMCPServer(ctx, endpointURL, headerName, headerValue)
@@ -1730,6 +1736,25 @@ func (s *MCPProxyService) postJSONRPCForVersion(ctx context.Context, endpointURL
 	return body, err
 }
 
+// mcpClientSupportedSpecVersions are the MCP spec versions Agent Manager's MCP client
+// supports when communicating with an MCP server.
+var mcpClientSupportedSpecVersions = []string{"2025-06-18", "2025-11-25", mcpSpecVersionJuly2026}
+
+// chooseMCPVersion picks the MCP version to communicate with a server in the highest version
+// that both the server and Agent Manager support. It returns "" when there is none, e.g. the
+// server's list is empty or has only versions Agent Manager doesn't support. Same rule as the
+// Go MCP SDK's client.
+func chooseMCPVersion(serverVersions []string) string {
+	chosen := ""
+	for _, version := range serverVersions {
+		// MCP versions are dates (YYYY-MM-DD), so the larger string is the later version.
+		if slices.Contains(mcpClientSupportedSpecVersions, version) && version > chosen {
+			chosen = version
+		}
+	}
+	return chosen
+}
+
 // mcpVersionNeedsInitialize reports whether an MCP version still uses the initialize handshake and
 // a session: every version before 2026-07-28.
 func mcpVersionNeedsInitialize(protocolVersion string) bool {
@@ -1757,7 +1782,7 @@ func buildRequestHeaders(protocolVersion string, method string) map[string]strin
 // discoverMCPServer sends server/discover, the first request in MCP 2026-07-28. There are three
 // outcomes:
 //   - The server answers with the MCP versions it supports: returns true.
-//   - The server refuses the method (see serverRefusedDiscoverMethod), so it is prior to
+//   - The server refuses the method (see isServerDiscoverRefusal), so it is prior to
 //     MCP 2026-07-28: returns false and no error.
 //   - Any other error, e.g. 401, 403, 429, 5xx, unreachable, or a 2xx body that isn't JSON-RPC:
 //     returns the error.
@@ -1767,7 +1792,7 @@ func (s *MCPProxyService) discoverMCPServer(ctx context.Context, endpointURL str
 	var discoverResult mcpServerDiscoverResult
 	body, err := s.postJSONRPCForVersion(ctx, endpointURL, discoverReq, "", headerName, headerValue, mcpSpecVersionJuly2026)
 	if err != nil {
-		if serverRefusedDiscoverMethod(err) {
+		if isServerDiscoverRefusal(err) {
 			return discoverResult, false, nil
 		}
 		return discoverResult, false, err
@@ -1780,7 +1805,7 @@ func (s *MCPProxyService) discoverMCPServer(ctx context.Context, endpointURL str
 	return discoverResult, serverAnswered, nil
 }
 
-// serverRefusedDiscoverMethod reports whether a failed server/discover means "this server doesn't
+// isServerDiscoverRefusal reports whether a failed server/discover means "this server doesn't
 // support the method", so Agent Manager should try initialize instead.
 //
 //	401, 403, 429                       -> no: credentials or rate limit; initialize would also fail
@@ -1788,7 +1813,7 @@ func (s *MCPProxyService) discoverMCPServer(ctx context.Context, endpointURL str
 //	5xx with a JSON-RPC error body      -> yes: the server's MCP layer refused the method
 //	other 5xx                           -> no: the server is broken
 //	unreachable, timeout, too large     -> no
-func serverRefusedDiscoverMethod(err error) bool {
+func isServerDiscoverRefusal(err error) bool {
 	var statusErr *mcpHTTPStatusError
 	if !errors.As(err, &statusErr) {
 		return false

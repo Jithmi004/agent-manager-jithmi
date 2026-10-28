@@ -918,3 +918,54 @@ func TestMCPHTTPStatusError_KeepsOldText(t *testing.T) {
 	err := &mcpHTTPStatusError{StatusCode: 403, Body: "forbidden"}
 	assert.Equal(t, "request failed with status 403: forbidden", err.Error())
 }
+
+func TestChooseMCPVersion(t *testing.T) {
+	tests := []struct {
+		name           string
+		serverVersions []string
+		want           string
+	}{
+		{name: "highest shared version", serverVersions: []string{"2025-11-25", "2026-07-28"}, want: "2026-07-28"},
+		{name: "only versions before 2026-07-28", serverVersions: []string{"2025-06-18", "2025-11-25"}, want: "2025-11-25"},
+		{name: "versions Agent Manager doesn't support are skipped", serverVersions: []string{"2027-03-01", "2026-07-28"}, want: "2026-07-28"},
+		{name: "empty list: none", serverVersions: []string{}, want: ""},
+		{name: "no version in common: none", serverVersions: []string{"2027-03-01"}, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, chooseMCPVersion(tt.serverVersions))
+		})
+	}
+}
+
+// A server can answer server/discover yet give no 2026-07-28 or later version Agent Manager
+// supports. Like the Go MCP SDK's client, Agent Manager then connects with initialize.
+func TestFetchMCPServerInfo_DiscoverAnsweredButInitializeStillNeeded(t *testing.T) {
+	tests := []struct {
+		name              string
+		supportedVersions string
+	}{
+		{name: "only versions before 2026-07-28", supportedVersions: `["2025-11-25","2025-06-18"]`},
+		{name: "empty list", supportedVersions: `[]`},
+		{name: "no version in common", supportedVersions: `["2027-03-01"]`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &oldMCPServerForTest{
+				discoverStatus: 200,
+				discoverBody:   `{"jsonrpc":"2.0","id":1,"result":{"supportedVersions":` + tt.supportedVersions + `}}`,
+			}
+			srv := httptest.NewServer(fake)
+			defer srv.Close()
+			svc := &MCPProxyService{client: srv.Client(), logger: discardLogger()}
+
+			resp, err := svc.fetchMCPServerInfo(context.Background(), srv.URL, "", "")
+
+			assert.NoError(t, err)
+			if assert.NotNil(t, resp.Tools) {
+				assert.Equal(t, "greet_old", (*resp.Tools)[0]["name"])
+			}
+			assert.Equal(t, []string{"server/discover", "initialize"}, fake.methods[:2])
+		})
+	}
+}
