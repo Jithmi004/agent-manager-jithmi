@@ -55,18 +55,20 @@ var mcpProxyHandleRe = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 const maxMCPProxyDeploymentHandleLength = 100
 
 const (
-	mcpJSONRPCVersion      = "2.0"
-	mcpProtocolVersion     = "2025-06-18"
-	mcpMethodInitialize    = "initialize"
-	mcpMethodInitialized   = "notifications/initialized"
-	mcpMethodToolsList     = "tools/list"
-	mcpMethodPromptsList   = "prompts/list"
-	mcpMethodResourcesList = "resources/list"
-	mcpClientName          = "agent-manager-mcp-client"
-	mcpClientVersion       = "1.0.0"
-	mcpSessionHeader       = "Mcp-Session-Id"
-	mcpRequestTimeout      = 10 * time.Second
-	maxMCPResponseBody     = 10 << 20
+	mcpJSONRPCVersion       = "2.0"
+	mcpProtocolVersion      = "2025-06-18"
+	mcpSpecVersionJuly2026  = "2026-07-28"
+	mcpMethodServerDiscover = "server/discover"
+	mcpMethodInitialize     = "initialize"
+	mcpMethodInitialized    = "notifications/initialized"
+	mcpMethodToolsList      = "tools/list"
+	mcpMethodPromptsList    = "prompts/list"
+	mcpMethodResourcesList  = "resources/list"
+	mcpClientName           = "agent-manager-mcp-client"
+	mcpClientVersion        = "1.0.0"
+	mcpSessionHeader        = "Mcp-Session-Id"
+	mcpRequestTimeout       = 10 * time.Second
+	maxMCPResponseBody      = 10 << 20
 )
 
 // MCPProxyService handles MCP proxy operations.
@@ -1662,6 +1664,15 @@ func policiesFromPtr(policies *[]models.MCPPolicy) []models.MCPPolicy {
 }
 
 func (s *MCPProxyService) fetchMCPServerInfo(ctx context.Context, endpointURL string, headerName string, headerValue string) (*models.MCPServerInfoFetchResponse, error) {
+	// discover MCP server with server/discover (MCP 2026-07-28 onwards).
+	// If server answers: MCP 2026-07-28 or later. Hence no initialize.
+	// Server refuses: before MCP 2026-07-28. Connect with initialize.
+	discoverResult, serverAnsweredDiscover := s.discoverMCPServer(ctx, endpointURL, headerName, headerValue)
+	if serverAnsweredDiscover {
+		return s.fetchToolsPromptsAndResources(ctx, endpointURL, "", headerName, headerValue, mcpSpecVersionJuly2026,
+			discoverResult.Result.Meta.ServerInfo), nil
+	}
+
 	sessionID, serverInfo, err := s.initializeMCPServer(ctx, endpointURL, headerName, headerValue)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize MCP server: %w", err)
@@ -1675,22 +1686,88 @@ func (s *MCPProxyService) fetchMCPServerInfo(ctx context.Context, endpointURL st
 		return nil, fmt.Errorf("failed to send notification: %w", err)
 	}
 
+	// Server before MCP 2026-07-28: list at the version initialize asked for. Each request
+	// carries the session ID that initialize gave us.
+	return s.fetchToolsPromptsAndResources(ctx, endpointURL, sessionID, headerName, headerValue, mcpProtocolVersion, serverInfo), nil
+}
+
+// fetchToolsPromptsAndResources asks the server for its tools, prompts and resources.
+// protocolVersion decides how to send each request (see postJSONRPCForVersion).
+func (s *MCPProxyService) fetchToolsPromptsAndResources(ctx context.Context, endpointURL string, sessionID string, headerName string, headerValue string, protocolVersion string, serverInfo map[string]interface{}) *models.MCPServerInfoFetchResponse {
 	resp := &models.MCPServerInfoFetchResponse{}
 	if serverInfo != nil {
 		resp.ServerInfo = &serverInfo
 	}
 
-	if tools := s.fetchTools(ctx, endpointURL, sessionID, headerName, headerValue); len(tools) > 0 {
+	if tools := s.fetchTools(ctx, endpointURL, sessionID, headerName, headerValue, protocolVersion); len(tools) > 0 {
 		resp.Tools = &tools
 	}
-	if prompts := s.fetchPrompts(ctx, endpointURL, sessionID, headerName, headerValue); len(prompts) > 0 {
+	if prompts := s.fetchPrompts(ctx, endpointURL, sessionID, headerName, headerValue, protocolVersion); len(prompts) > 0 {
 		resp.Prompts = &prompts
 	}
-	if resources := s.fetchResources(ctx, endpointURL, sessionID, headerName, headerValue); len(resources) > 0 {
+	if resources := s.fetchResources(ctx, endpointURL, sessionID, headerName, headerValue, protocolVersion); len(resources) > 0 {
 		resp.Resources = &resources
 	}
 
-	return resp, nil
+	return resp
+}
+
+// postJSONRPCForVersion sends requests based on the MCP server's expected protocol version.
+//   - Before MCP 2026-07-28: the request carries the session ID taken from initialize, in the
+//     Mcp-Session-Id header.
+//   - MCP 2026-07-28 and later: no session. Instead the request carries the version and
+//     client info in params._meta, and the version and method in HTTP headers.
+func (s *MCPProxyService) postJSONRPCForVersion(ctx context.Context, endpointURL string, req mcpJSONRPCRequest, sessionID string, headerName string, headerValue string, protocolVersion string) ([]byte, error) {
+	if mcpVersionNeedsInitialize(protocolVersion) {
+		return s.postJSONRPCWithSession(ctx, endpointURL, req, sessionID, headerName, headerValue)
+	}
+
+	req.Params = map[string]interface{}{"_meta": buildRequestMeta(protocolVersion)}
+	body, _, err := s.postJSONRPC(ctx, endpointURL, req, "", headerName, headerValue, buildRequestHeaders(protocolVersion, req.Method))
+	return body, err
+}
+
+// mcpVersionNeedsInitialize reports whether an MCP version still uses the initialize handshake and
+// a session: every version before 2026-07-28.
+func mcpVersionNeedsInitialize(protocolVersion string) bool {
+	return protocolVersion < mcpSpecVersionJuly2026
+}
+
+// buildRequestMeta builds the params._meta that MCP 2026-07-28 requires on every request.
+func buildRequestMeta(protocolVersion string) map[string]interface{} {
+	return map[string]interface{}{
+		"io.modelcontextprotocol/protocolVersion":    protocolVersion,
+		"io.modelcontextprotocol/clientInfo":         map[string]string{"name": mcpClientName, "version": mcpClientVersion},
+		"io.modelcontextprotocol/clientCapabilities": map[string]interface{}{},
+	}
+}
+
+// buildRequestHeaders builds the HTTP headers MCP 2026-07-28 requires on every request: the version
+// and the method.
+func buildRequestHeaders(protocolVersion string, method string) map[string]string {
+	return map[string]string{
+		"MCP-Protocol-Version": protocolVersion,
+		"Mcp-Method":           method,
+	}
+}
+
+// discoverMCPServer sends server/discover, the first request in MCP 2026-07-28, and reports
+// whether the server answered it, with its answer.
+//
+// A new server answers with the MCP versions it supports, and this returns true. An old server
+// doesn't know the method and refuses it, and this returns false. A server can refuse in two
+// ways, and both count:
+//   - an HTTP error, e.g. 400 "Unsupported protocol version"
+//   - HTTP 200 with a JSON-RPC error in the body, e.g. -32601 "Method not found"
+func (s *MCPProxyService) discoverMCPServer(ctx context.Context, endpointURL string, headerName string, headerValue string) (mcpServerDiscoverResult, bool) {
+	discoverReq := mcpJSONRPCRequest{JSONRPC: mcpJSONRPCVersion, ID: 1, Method: mcpMethodServerDiscover}
+
+	var discoverResult mcpServerDiscoverResult
+	body, err := s.postJSONRPCForVersion(ctx, endpointURL, discoverReq, "", headerName, headerValue, mcpSpecVersionJuly2026)
+	// It answered only if all three hold: no HTTP error, the body is JSON-RPC, and the body
+	// isn't a JSON-RPC error.
+	serverAnswered := err == nil && json.Unmarshal(body, &discoverResult) == nil && discoverResult.Error == nil
+	return discoverResult, serverAnswered
 }
 
 func (s *MCPProxyService) initializeMCPServer(ctx context.Context, endpointURL string, headerName string, headerValue string) (string, map[string]interface{}, error) {
@@ -1705,7 +1782,7 @@ func (s *MCPProxyService) initializeMCPServer(ctx context.Context, endpointURL s
 		},
 	}
 
-	body, headers, err := s.postJSONRPC(ctx, endpointURL, initReq, "", headerName, headerValue)
+	body, headers, err := s.postJSONRPC(ctx, endpointURL, initReq, "", headerName, headerValue, nil)
 	if err != nil {
 		return "", nil, err
 	}
@@ -1721,9 +1798,9 @@ func (s *MCPProxyService) initializeMCPServer(ctx context.Context, endpointURL s
 	return headers.Get(mcpSessionHeader), initResult.Result.ServerInfo, nil
 }
 
-func (s *MCPProxyService) fetchTools(ctx context.Context, endpointURL string, sessionID string, headerName string, headerValue string) []map[string]interface{} {
+func (s *MCPProxyService) fetchTools(ctx context.Context, endpointURL string, sessionID string, headerName string, headerValue string, protocolVersion string) []map[string]interface{} {
 	req := mcpJSONRPCRequest{JSONRPC: mcpJSONRPCVersion, ID: 2, Method: mcpMethodToolsList}
-	body, err := s.postJSONRPCWithSession(ctx, endpointURL, req, sessionID, headerName, headerValue)
+	body, err := s.postJSONRPCForVersion(ctx, endpointURL, req, sessionID, headerName, headerValue, protocolVersion)
 	if err != nil {
 		s.logger.Warn("Failed to fetch MCP tools, continuing with available info", "error", err)
 		return nil
@@ -1740,9 +1817,9 @@ func (s *MCPProxyService) fetchTools(ctx context.Context, endpointURL string, se
 	return result.Result.Tools
 }
 
-func (s *MCPProxyService) fetchPrompts(ctx context.Context, endpointURL string, sessionID string, headerName string, headerValue string) []map[string]interface{} {
+func (s *MCPProxyService) fetchPrompts(ctx context.Context, endpointURL string, sessionID string, headerName string, headerValue string, protocolVersion string) []map[string]interface{} {
 	req := mcpJSONRPCRequest{JSONRPC: mcpJSONRPCVersion, ID: 3, Method: mcpMethodPromptsList}
-	body, err := s.postJSONRPCWithSession(ctx, endpointURL, req, sessionID, headerName, headerValue)
+	body, err := s.postJSONRPCForVersion(ctx, endpointURL, req, sessionID, headerName, headerValue, protocolVersion)
 	if err != nil {
 		s.logger.Warn("Failed to fetch MCP prompts, continuing with available info", "error", err)
 		return nil
@@ -1759,9 +1836,9 @@ func (s *MCPProxyService) fetchPrompts(ctx context.Context, endpointURL string, 
 	return result.Result.Prompts
 }
 
-func (s *MCPProxyService) fetchResources(ctx context.Context, endpointURL string, sessionID string, headerName string, headerValue string) []map[string]interface{} {
+func (s *MCPProxyService) fetchResources(ctx context.Context, endpointURL string, sessionID string, headerName string, headerValue string, protocolVersion string) []map[string]interface{} {
 	req := mcpJSONRPCRequest{JSONRPC: mcpJSONRPCVersion, ID: 4, Method: mcpMethodResourcesList}
-	body, err := s.postJSONRPCWithSession(ctx, endpointURL, req, sessionID, headerName, headerValue)
+	body, err := s.postJSONRPCForVersion(ctx, endpointURL, req, sessionID, headerName, headerValue, protocolVersion)
 	if err != nil {
 		s.logger.Warn("Failed to fetch MCP resources, continuing with available info", "error", err)
 		return nil
@@ -1779,11 +1856,11 @@ func (s *MCPProxyService) fetchResources(ctx context.Context, endpointURL string
 }
 
 func (s *MCPProxyService) postJSONRPCWithSession(ctx context.Context, endpointURL string, payload interface{}, sessionID string, headerName string, headerValue string) ([]byte, error) {
-	body, _, err := s.postJSONRPC(ctx, endpointURL, payload, sessionID, headerName, headerValue)
+	body, _, err := s.postJSONRPC(ctx, endpointURL, payload, sessionID, headerName, headerValue, nil)
 	return body, err
 }
 
-func (s *MCPProxyService) postJSONRPC(ctx context.Context, endpointURL string, payload interface{}, sessionID string, headerName string, headerValue string) ([]byte, http.Header, error) {
+func (s *MCPProxyService) postJSONRPC(ctx context.Context, endpointURL string, payload interface{}, sessionID string, headerName string, headerValue string, extraHeaders map[string]string) ([]byte, http.Header, error) {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return nil, nil, err
@@ -1795,6 +1872,9 @@ func (s *MCPProxyService) postJSONRPC(ctx context.Context, endpointURL string, p
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json, text/event-stream")
 	setSafeHeader(httpReq.Header, headerName, headerValue)
+	for name, value := range extraHeaders {
+		httpReq.Header.Set(name, value)
+	}
 	if sessionID != "" {
 		httpReq.Header.Set(mcpSessionHeader, sessionID)
 	}
@@ -1904,6 +1984,16 @@ type mcpJSONRPCRequest struct {
 type mcpJSONRPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+}
+
+type mcpServerDiscoverResult struct {
+	Result struct {
+		SupportedVersions []string `json:"supportedVersions"`
+		Meta              struct {
+			ServerInfo map[string]interface{} `json:"io.modelcontextprotocol/serverInfo"`
+		} `json:"_meta"`
+	} `json:"result"`
+	Error *mcpJSONRPCError `json:"error"`
 }
 
 type mcpInitializeResult struct {
