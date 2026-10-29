@@ -70,6 +70,11 @@ const (
 	mcpSessionHeader        = "Mcp-Session-Id"
 	mcpRequestTimeout       = 10 * time.Second
 	maxMCPResponseBody      = 10 << 20
+	// JSON-RPC error codes that MCP 2026-07-28 defines. Only servers on 2026-07-28 or later send
+	// them; earlier servers use -32000 to -32019 for their own errors.
+	mcpErrorHeaderMismatch                  = -32020
+	mcpErrorMissingRequiredClientCapability = -32021
+	mcpErrorUnsupportedProtocolVersion      = -32022
 )
 
 // MCPProxyService handles MCP proxy operations.
@@ -1809,6 +1814,8 @@ func (s *MCPProxyService) discoverMCPServer(ctx context.Context, endpointURL str
 // support the method", so Agent Manager should try initialize instead.
 //
 //	401, 403, 429                       -> no: credentials or rate limit; initialize would also fail
+//	a 2026-07-28 error in the body      -> no: the server is new, e.g. it doesn't support client
+//	                                       version (-32022) or rejected its headers (-32020)
 //	other 4xx (e.g. 400, 404, 405)      -> yes: the server refused this request
 //	5xx with a JSON-RPC error body      -> yes: the server's MCP layer refused the method
 //	other 5xx                           -> no: the server is broken
@@ -1820,6 +1827,8 @@ func isServerDiscoverRefusal(err error) bool {
 	}
 	switch {
 	case statusErr.StatusCode == http.StatusForbidden, statusErr.StatusCode == http.StatusTooManyRequests:
+		return false
+	case isMCPJuly2026Error(statusErr.Body):
 		return false
 	case statusErr.StatusCode >= 400 && statusErr.StatusCode < 500:
 		return true
@@ -2042,6 +2051,24 @@ type mcpJSONRPCRequest struct {
 	ID      int         `json:"id,omitempty"`
 	Method  string      `json:"method"`
 	Params  interface{} `json:"params,omitempty"`
+}
+
+// isMCPJuly2026Error reports whether a response body is a JSON-RPC error with one of the codes
+// that only servers on MCP 2026-07-28 or later send (header mismatch, missing client capability,
+// unsupported protocol version).
+func isMCPJuly2026Error(body string) bool {
+	var response struct {
+		Error *mcpJSONRPCError `json:"error"`
+	}
+	if json.Unmarshal([]byte(body), &response) != nil || response.Error == nil {
+		return false
+	}
+	switch response.Error.Code {
+	case mcpErrorHeaderMismatch, mcpErrorMissingRequiredClientCapability, mcpErrorUnsupportedProtocolVersion:
+		return true
+	default:
+		return false
+	}
 }
 
 // mcpHTTPStatusError is a non-2xx answer from an MCP server, other than 401 (which is
