@@ -972,3 +972,52 @@ func TestFetchMCPServerInfo_DiscoverAnsweredButInitializeStillNeeded(t *testing.
 		})
 	}
 }
+
+// The fetch response reports which MCP versions the server supports, so the proxy can be
+// configured with them.
+func TestFetchMCPServerInfo_ReportsSupportedVersions(t *testing.T) {
+	tests := []struct {
+		name   string
+		server http.Handler
+		want   *[]string
+	}{
+		{
+			name:   "server before 2026-07-28: the version initialize agreed on",
+			server: &oldMCPServerForTest{},
+			want:   &[]string{"2025-06-18"},
+		},
+		{
+			name:   "server on 2026-07-28: the versions server/discover reported",
+			server: &newMCPServerForTest{},
+			want:   &[]string{"2026-07-28"},
+		},
+		{
+			name: "server/discover answered with only earlier versions: that list, not just initialize's one",
+			server: &oldMCPServerForTest{
+				discoverStatus: 200,
+				discoverBody:   `{"jsonrpc":"2.0","id":1,"result":{"supportedVersions":["2025-11-25","2025-06-18"]}}`,
+			},
+			want: &[]string{"2025-11-25", "2025-06-18"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(tt.server)
+			defer srv.Close()
+			svc := &MCPProxyService{client: srv.Client(), logger: discardLogger()}
+
+			resp, err := svc.fetchMCPServerInfo(context.Background(), srv.URL, "", "")
+
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, resp.SupportedVersions)
+		})
+	}
+}
+
+// Only values shaped like an MCP version (a date) are reported; none left means no field.
+func TestObtainValidMCPVersions(t *testing.T) {
+	assert.Equal(t, &[]string{"2026-07-28", "2025-06-18"},
+		obtainValidMCPVersions([]string{"2026-07-28", "latest", "", "2025-06-18", "2026-7-28"}))
+	assert.Nil(t, obtainValidMCPVersions([]string{"latest"}))
+	assert.Nil(t, obtainValidMCPVersions(nil))
+}

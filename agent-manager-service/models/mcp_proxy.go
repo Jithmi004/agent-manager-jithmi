@@ -252,8 +252,9 @@ type MCPServerInfoFetchRequest struct {
 
 // MCPServerInfoFetchResponse contains the MCP server metadata and capabilities.
 type MCPServerInfoFetchResponse struct {
-	Prompts    *[]map[string]interface{} `json:"prompts,omitempty"`
-	Resources  *[]map[string]interface{} `json:"resources,omitempty"`
-	ServerInfo *map[string]interface{}   `json:"serverInfo,omitempty"`
-	Tools      *[]map[string]interface{} `json:"tools,omitempty"`
+	Prompts           *[]map[string]interface{} `json:"prompts,omitempty"`
+	Resources         *[]map[string]interface{} `json:"resources,omitempty"`
+	ServerInfo        *map[string]interface{}   `json:"serverInfo,omitempty"`
+	SupportedVersions *[]string                 `json:"supportedVersions,omitempty"`
+	Tools             *[]map[string]interface{} `json:"tools,omitempty"`
 }
