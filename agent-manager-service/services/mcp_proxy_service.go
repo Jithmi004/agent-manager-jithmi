@@ -182,6 +182,9 @@ func (s *MCPProxyService) Create(ctx context.Context, orgUUID, createdBy string,
 	if err := validateMCPEndpoints(ctx, req.Endpoints); err != nil {
 		return nil, err
 	}
+	if err := validateMCPSpecVersionsInRequest(req.McpSpecVersion, req.McpSpecVersions); err != nil {
+		return nil, err
+	}
 	if err := validateMCPProxyDeploymentHandleLengths(handle, req.Endpoints); err != nil {
 		return nil, err
 	}
@@ -209,11 +212,12 @@ func (s *MCPProxyService) Create(ctx context.Context, orgUUID, createdBy string,
 		CreatedBy:   createdBy,
 		Status:      models.StatusCreated,
 		Configuration: models.MCPProxyConfig{
-			Name:        name,
-			Version:     version,
-			Context:     req.Context,
-			Vhost:       req.Vhost,
-			SpecVersion: valueOrEmpty(req.McpSpecVersion),
+			Name:         name,
+			Version:      version,
+			Context:      req.Context,
+			Vhost:        req.Vhost,
+			SpecVersion:  valueOrEmpty(req.McpSpecVersion),
+			SpecVersions: listOrNil(req.McpSpecVersions),
 		},
 	}
 
@@ -434,6 +438,9 @@ func (s *MCPProxyService) Update(ctx context.Context, orgUUID, proxyID string, r
 	if err := validateMCPEndpoints(ctx, req.Endpoints); err != nil {
 		return nil, err
 	}
+	if err := validateMCPSpecVersionsInRequest(req.McpSpecVersion, req.McpSpecVersions); err != nil {
+		return nil, err
+	}
 	if err := validateMCPProxyDeploymentHandleLengths(handle, req.Endpoints); err != nil {
 		return nil, err
 	}
@@ -485,11 +492,12 @@ func (s *MCPProxyService) Update(ctx context.Context, orgUUID, proxyID string, r
 		proxy.Name = name
 		proxy.Version = version
 		proxy.Configuration = models.MCPProxyConfig{
-			Name:        name,
-			Version:     version,
-			Context:     req.Context,
-			Vhost:       req.Vhost,
-			SpecVersion: valueOrEmpty(req.McpSpecVersion),
+			Name:         name,
+			Version:      version,
+			Context:      req.Context,
+			Vhost:        req.Vhost,
+			SpecVersion:  valueOrEmpty(req.McpSpecVersion),
+			SpecVersions: listOrNil(req.McpSpecVersions),
 		}
 
 		if err := s.repo.Update(ctx, tx, proxy, orgUUID); err != nil {
@@ -948,6 +956,13 @@ func valueOrEmpty(value *string) string {
 	return *value
 }
 
+func listOrNil(value *[]string) []string {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
 func stringPtrIfNotEmpty(value string) *string {
 	if value == "" {
 		return nil
@@ -1109,18 +1124,19 @@ func convertModelMCPProxyToSpec(proxy *models.MCPProxy) *models.MCPProxyDTO {
 		version = proxy.Configuration.Version
 	}
 	return &models.MCPProxyDTO{
-		Context:        proxy.Configuration.Context,
-		CreatedAt:      timePtrIfNotZero(createdAt),
-		CreatedBy:      stringPtrIfNotEmpty(proxy.CreatedBy),
-		Description:    stringPtrIfNotEmpty(proxy.Description),
-		ID:             id,
-		InCatalog:      inCatalog,
-		McpSpecVersion: stringPtrIfNotEmpty(proxy.Configuration.SpecVersion),
-		Name:           name,
-		Endpoints:      buildMCPEndpointDTOsForResponse(proxy.Endpoints),
-		UpdatedAt:      timePtrIfNotZero(updatedAt),
-		Version:        version,
-		Vhost:          proxy.Configuration.Vhost,
+		Context:         proxy.Configuration.Context,
+		CreatedAt:       timePtrIfNotZero(createdAt),
+		CreatedBy:       stringPtrIfNotEmpty(proxy.CreatedBy),
+		Description:     stringPtrIfNotEmpty(proxy.Description),
+		ID:              id,
+		InCatalog:       inCatalog,
+		McpSpecVersion:  stringPtrIfNotEmpty(proxy.Configuration.SpecVersion),
+		McpSpecVersions: obtainStoredMCPSpecVersions(proxy.Configuration),
+		Name:            name,
+		Endpoints:       buildMCPEndpointDTOsForResponse(proxy.Endpoints),
+		UpdatedAt:       timePtrIfNotZero(updatedAt),
+		Version:         version,
+		Vhost:           proxy.Configuration.Vhost,
 	}
 }
 
@@ -1145,17 +1161,58 @@ func convertModelMCPProxyToListItem(proxy *models.MCPProxy) models.MCPProxyListI
 		version = proxy.Configuration.Version
 	}
 	return models.MCPProxyListItem{
-		Context:        proxy.Configuration.Context,
-		CreatedAt:      timePtrIfNotZero(createdAt),
-		CreatedBy:      stringPtrIfNotEmpty(proxy.CreatedBy),
-		Description:    stringPtrIfNotEmpty(proxy.Description),
-		ID:             stringPtrIfNotEmpty(id),
-		McpSpecVersion: stringPtrIfNotEmpty(proxy.Configuration.SpecVersion),
-		Name:           stringPtrIfNotEmpty(name),
-		Status:         stringPtrIfNotEmpty(status),
-		UpdatedAt:      timePtrIfNotZero(updatedAt),
-		Version:        stringPtrIfNotEmpty(version),
+		Context:         proxy.Configuration.Context,
+		CreatedAt:       timePtrIfNotZero(createdAt),
+		CreatedBy:       stringPtrIfNotEmpty(proxy.CreatedBy),
+		Description:     stringPtrIfNotEmpty(proxy.Description),
+		ID:              stringPtrIfNotEmpty(id),
+		McpSpecVersion:  stringPtrIfNotEmpty(proxy.Configuration.SpecVersion),
+		McpSpecVersions: obtainStoredMCPSpecVersions(proxy.Configuration),
+		Name:            stringPtrIfNotEmpty(name),
+		Status:          stringPtrIfNotEmpty(status),
+		UpdatedAt:       timePtrIfNotZero(updatedAt),
+		Version:         stringPtrIfNotEmpty(version),
 	}
+}
+
+// validateMCPSpecVersionsInRequest checks the MCP versions an API caller sent in a create or
+// update request, and rejects the request (400) if they're wrong, so the caller can fix them:
+//   - mcpSpecVersions and the deprecated mcpSpecVersion can't both be set.
+//   - mcpSpecVersions, when set, needs at least one version.
+//   - Every version must be a date (YYYY-MM-DD); the gateway rejects anything else on deploy.
+//
+// The console sends versions that obtainValidMCPVersionsFromServer already cleaned, but any API
+// caller (amctl, scripts, curl) can send anything, so the request is checked here too.
+func validateMCPSpecVersionsInRequest(mcpSpecVersion *string, mcpSpecVersions *[]string) error {
+	if mcpSpecVersions == nil {
+		return nil
+	}
+	if mcpSpecVersion != nil {
+		return fmt.Errorf("%w: set mcpSpecVersions or the deprecated mcpSpecVersion, not both", utils.ErrInvalidInput)
+	}
+	if len(*mcpSpecVersions) == 0 {
+		return fmt.Errorf("%w: mcpSpecVersions must list at least one MCP version", utils.ErrInvalidInput)
+	}
+	for _, version := range *mcpSpecVersions {
+		if !mcpVersionPattern.MatchString(version) {
+			return fmt.Errorf("%w: mcpSpecVersions: %q is not an MCP version (YYYY-MM-DD)", utils.ErrInvalidInput, version)
+		}
+	}
+	return nil
+}
+
+// obtainStoredMCPSpecVersions returns the MCP versions stored in a proxy's config, for the API response.
+// SpecVersions is used when set; a proxy saved before it existed has only SpecVersion, which is
+// returned as a one-item list. Returns nil when neither is set.
+func obtainStoredMCPSpecVersions(config models.MCPProxyConfig) *[]string {
+	if len(config.SpecVersions) > 0 {
+		versions := config.SpecVersions
+		return &versions
+	}
+	if config.SpecVersion != "" {
+		return &[]string{config.SpecVersion}
+	}
+	return nil
 }
 
 // validateMCPEndpoints enforces the endpoint request structure: at least one endpoint,
@@ -1716,10 +1773,12 @@ func (s *MCPProxyService) fetchMCPServerInfo(ctx context.Context, endpointURL st
 // mcpVersionPattern is the shape of an MCP version: a date, YYYY-MM-DD.
 var mcpVersionPattern = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
-// obtainValidMCPVersions returns only the values shaped like an MCP version (a date, YYYY-MM-DD), so a
-// server that reports junk doesn't put it into the proxy's configuration. Returns nil, which
-// leaves the supportedVersions field out of the response, when none are left.
-func obtainValidMCPVersions(versions []string) *[]string {
+// obtainValidMCPVersionsFromServer cleans the MCP versions an upstream MCP server reported (in
+// server/discover or initialize): it keeps only values shaped like an MCP version (a date,
+// YYYY-MM-DD) and quietly drops the rest. Returns nil, which leaves the supportedVersions field out of the response, when none
+// are left.
+// Versions an API caller sends are checked by validateMCPSpecVersionsInRequest instead.
+func obtainValidMCPVersionsFromServer(versions []string) *[]string {
 	kept := make([]string, 0, len(versions))
 	for _, version := range versions {
 		if mcpVersionPattern.MatchString(version) {
@@ -1740,7 +1799,7 @@ func (s *MCPProxyService) fetchToolsPromptsAndResources(ctx context.Context, end
 	if serverInfo != nil {
 		resp.ServerInfo = &serverInfo
 	}
-	resp.SupportedVersions = obtainValidMCPVersions(serverVersions)
+	resp.SupportedVersions = obtainValidMCPVersionsFromServer(serverVersions)
 
 	if tools := s.fetchTools(ctx, endpointURL, sessionID, headerName, headerValue, protocolVersion); len(tools) > 0 {
 		resp.Tools = &tools

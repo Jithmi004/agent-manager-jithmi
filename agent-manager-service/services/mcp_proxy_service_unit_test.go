@@ -1015,9 +1015,52 @@ func TestFetchMCPServerInfo_ReportsSupportedVersions(t *testing.T) {
 }
 
 // Only values shaped like an MCP version (a date) are reported; none left means no field.
-func TestObtainValidMCPVersions(t *testing.T) {
+func TestObtainValidMCPVersionsFromServer(t *testing.T) {
 	assert.Equal(t, &[]string{"2026-07-28", "2025-06-18"},
-		obtainValidMCPVersions([]string{"2026-07-28", "latest", "", "2025-06-18", "2026-7-28"}))
-	assert.Nil(t, obtainValidMCPVersions([]string{"latest"}))
-	assert.Nil(t, obtainValidMCPVersions(nil))
+		obtainValidMCPVersionsFromServer([]string{"2026-07-28", "latest", "", "2025-06-18", "2026-7-28"}))
+	assert.Nil(t, obtainValidMCPVersionsFromServer([]string{"latest"}))
+	assert.Nil(t, obtainValidMCPVersionsFromServer(nil))
+}
+
+func TestValidateMCPSpecVersionsInRequest(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     models.MCPProxyDTO
+		wantErr bool
+	}{
+		{name: "neither set", req: models.MCPProxyDTO{}},
+		{name: "only the deprecated single version", req: models.MCPProxyDTO{McpSpecVersion: strPtr("2025-06-18")}},
+		{name: "a list of versions", req: models.MCPProxyDTO{McpSpecVersions: &[]string{"2026-07-28", "2025-11-25"}}},
+		{name: "both set", req: models.MCPProxyDTO{McpSpecVersion: strPtr("2025-06-18"), McpSpecVersions: &[]string{"2026-07-28"}}, wantErr: true},
+		{name: "empty list", req: models.MCPProxyDTO{McpSpecVersions: &[]string{}}, wantErr: true},
+		{name: "a value that isn't a date", req: models.MCPProxyDTO{McpSpecVersions: &[]string{"2026-07-28", "latest"}}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateMCPSpecVersionsInRequest(tt.req.McpSpecVersion, tt.req.McpSpecVersions)
+			if tt.wantErr {
+				assert.ErrorIs(t, err, utils.ErrInvalidInput)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
+}
+
+// A proxy saved before mcpSpecVersions existed has only the single version; it reads back as a
+// one-item list.
+func TestObtainStoredMCPSpecVersions(t *testing.T) {
+	assert.Equal(t, &[]string{"2026-07-28", "2025-11-25"},
+		obtainStoredMCPSpecVersions(models.MCPProxyConfig{SpecVersions: []string{"2026-07-28", "2025-11-25"}}))
+	assert.Equal(t, &[]string{"2025-06-18"},
+		obtainStoredMCPSpecVersions(models.MCPProxyConfig{SpecVersion: "2025-06-18"}))
+	assert.Nil(t, obtainStoredMCPSpecVersions(models.MCPProxyConfig{}))
+}
+
+// The proxy and list-item responses both return the versions as mcpSpecVersions.
+func TestConvertModelMCPProxy_ReturnsMCPSpecVersions(t *testing.T) {
+	proxy := &models.MCPProxy{Configuration: models.MCPProxyConfig{SpecVersions: []string{"2026-07-28"}}}
+
+	assert.Equal(t, &[]string{"2026-07-28"}, convertModelMCPProxyToSpec(proxy).McpSpecVersions)
+	assert.Equal(t, &[]string{"2026-07-28"}, convertModelMCPProxyToListItem(proxy).McpSpecVersions)
 }
