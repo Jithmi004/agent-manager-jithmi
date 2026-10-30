@@ -94,21 +94,6 @@ function pathMatchesResource(
   );
 }
 
-function pathsIncludeEquivalent(
-  paths: LLMPolicyPath[],
-  newPath: LLMPolicyPath,
-): boolean {
-  const newMethods = [...(newPath.methods ?? [])].sort();
-  return paths.some((p) => {
-    if (p.path !== newPath.path) return false;
-    const methods = [...(p.methods ?? [])].sort();
-    return (
-      methods.length === newMethods.length &&
-      methods.every((m, i) => m === newMethods[i])
-    );
-  });
-}
-
 type DrawerContext =
   | { type: "global" }
   | { type: "resource"; method: string; path: string };
@@ -314,12 +299,9 @@ export function LLMProviderGuardrailsTab({
       if (!existing) {
         // First use of this guardrail: add it as a new policy.
         nextPolicies = [...policies, newPolicy];
-      } else if (pathsIncludeEquivalent(existing.paths ?? [], newPath)) {
-        // Already applied at this scope: add another copy as a separate policy,
-        // so the gateway runs both instead of keeping only one.
-        nextPolicies = [...policies, newPolicy];
       } else {
-        // Applied elsewhere only: add this scope to the existing policy.
+        // Already added: add this scope to the existing policy, even if the
+        // policy already has a path for the same scope.
         nextPolicies = policies.map((p, i) =>
           i === existingIndex
             ? { ...p, paths: [...(p.paths ?? []), newPath] }
