@@ -300,30 +300,31 @@ export function LLMProviderGuardrailsTab({
               params,
             };
 
-      const existing = policies.find(
+      const existingIndex = policies.findIndex(
         (p) => p.name === guardrail.name && p.version === guardrail.version,
       );
+      const existing = existingIndex >= 0 ? policies[existingIndex] : undefined;
+      const newPolicy: LLMPolicy = {
+        name: guardrail.name,
+        version: guardrail.version,
+        paths: [newPath],
+      };
 
       let nextPolicies: LLMPolicy[];
-      if (existing) {
-        const currentPaths = existing.paths ?? [];
-        const dedupedPaths = pathsIncludeEquivalent(currentPaths, newPath)
-          ? currentPaths
-          : [...currentPaths, newPath];
-        nextPolicies = policies.map((p) =>
-          p.name === guardrail.name && p.version === guardrail.version
-            ? { ...p, paths: dedupedPaths }
+      if (!existing) {
+        // First use of this guardrail: add it as a new policy.
+        nextPolicies = [...policies, newPolicy];
+      } else if (pathsIncludeEquivalent(existing.paths ?? [], newPath)) {
+        // Already applied at this scope: add another copy as a separate policy,
+        // so the gateway runs both instead of keeping only one.
+        nextPolicies = [...policies, newPolicy];
+      } else {
+        // Applied elsewhere only: add this scope to the existing policy.
+        nextPolicies = policies.map((p, i) =>
+          i === existingIndex
+            ? { ...p, paths: [...(p.paths ?? []), newPath] }
             : p,
         );
-      } else {
-        nextPolicies = [
-          ...policies,
-          {
-            name: guardrail.name,
-            version: guardrail.version,
-            paths: [newPath],
-          },
-        ];
       }
 
       setLocalPolicies(nextPolicies);
@@ -699,25 +700,6 @@ export function LLMProviderGuardrailsTab({
         emptySearchTitle="No guardrails match your search"
         emptyCatalogTitle="No guardrails available"
         emptyCatalogDescription="No guardrail policies are available in the catalog."
-        disabledPolicyKeys={
-          editingContext
-            ? []
-            : policies
-                .filter((p) =>
-                  drawerContext?.type === "global"
-                    ? (p.paths ?? []).some(isGlobalPath)
-                    : drawerContext?.type === "resource"
-                      ? (p.paths ?? []).some((path) =>
-                          pathMatchesResource(
-                            path,
-                            drawerContext.path,
-                            drawerContext.method,
-                          ),
-                        )
-                      : false,
-                )
-                .map((p) => `${p.name}@${p.version}`)
-        }
         existingSettings={editingContext?.params}
         editPolicyKey={
           editingContext
