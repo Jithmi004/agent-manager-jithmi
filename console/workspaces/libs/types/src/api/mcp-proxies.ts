@@ -151,6 +151,7 @@ export interface MCPServerInfoFetchResponse {
   tools?: Record<string, unknown>[];
   resources?: Record<string, unknown>[];
   prompts?: Record<string, unknown>[];
+  supportedVersions?: string[];
 }
 
 export type CreateMCPProxyPathParams = OrgPathParams;
