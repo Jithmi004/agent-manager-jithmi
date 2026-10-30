@@ -4145,7 +4145,7 @@ type MCPProxyListItem struct {
 	// Id Unique handle for the MCP proxy
 	Id *string `json:"id,omitempty"`
 
-	// McpSpecVersion Deprecated: use mcpSpecVersions. MCP specification version implemented by the upstream server. Still accepted when mcpSpecVersions is not set.
+	// McpSpecVersion Deprecated: no longer returned; read mcpSpecVersions instead.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	McpSpecVersion *string `json:"mcpSpecVersion,omitempty"`
 
@@ -4195,7 +4195,7 @@ type MCPProxyRequest struct {
 	// InCatalog Whether the MCP proxy is available in the catalog
 	InCatalog *bool `json:"inCatalog,omitempty"`
 
-	// McpSpecVersion Deprecated: use mcpSpecVersions. MCP specification version implemented by the upstream server. Still accepted when mcpSpecVersions is not set.
+	// McpSpecVersion Deprecated: use mcpSpecVersions. MCP specification version implemented by the upstream server. Still accepted when mcpSpecVersions is not set, and saved as a one-item mcpSpecVersions.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	McpSpecVersion *string `json:"mcpSpecVersion,omitempty"`
 
@@ -4238,7 +4238,7 @@ type MCPProxyResponse struct {
 	// InCatalog Whether the MCP proxy is available in the catalog
 	InCatalog *bool `json:"inCatalog,omitempty"`
 
-	// McpSpecVersion Deprecated: use mcpSpecVersions. MCP specification version implemented by the upstream server. Still accepted when mcpSpecVersions is not set.
+	// McpSpecVersion Deprecated: no longer returned; read mcpSpecVersions instead.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	McpSpecVersion *string `json:"mcpSpecVersion,omitempty"`
 

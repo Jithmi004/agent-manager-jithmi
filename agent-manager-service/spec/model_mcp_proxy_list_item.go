@@ -30,7 +30,7 @@ type MCPProxyListItem struct {
 	Version *string `json:"version,omitempty"`
 	// MCP proxy context path
 	Context *string `json:"context,omitempty"`
-	// Deprecated: use mcpSpecVersions. MCP specification version implemented by the upstream server. Still accepted when mcpSpecVersions is not set.
+	// Deprecated: no longer returned; read mcpSpecVersions instead.
 	// Deprecated
 	McpSpecVersion *string `json:"mcpSpecVersion,omitempty"`
 	// MCP specification versions the upstream server supports, for example from the supportedVersions of /mcp-proxies/fetch-server-info. Each value is a date (YYYY-MM-DD). Cannot be set together with mcpSpecVersion.

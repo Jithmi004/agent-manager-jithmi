@@ -57,7 +57,7 @@ const maxMCPProxyDeploymentHandleLength = 100
 
 const (
 	mcpJSONRPCVersion       = "2.0"
-	mcpProtocolVersion      = "2025-06-18"
+	mcpSpecVersionJune2025  = "2025-06-18"
 	mcpSpecVersionJuly2026  = "2026-07-28"
 	mcpMethodServerDiscover = "server/discover"
 	mcpMethodInitialize     = "initialize"
@@ -216,8 +216,7 @@ func (s *MCPProxyService) Create(ctx context.Context, orgUUID, createdBy string,
 			Version:      version,
 			Context:      req.Context,
 			Vhost:        req.Vhost,
-			SpecVersion:  valueOrEmpty(req.McpSpecVersion),
-			SpecVersions: listOrNil(req.McpSpecVersions),
+			SpecVersions: obtainMCPSpecVersionsFromRequest(req.McpSpecVersion, req.McpSpecVersions),
 		},
 	}
 
@@ -496,8 +495,7 @@ func (s *MCPProxyService) Update(ctx context.Context, orgUUID, proxyID string, r
 			Version:      version,
 			Context:      req.Context,
 			Vhost:        req.Vhost,
-			SpecVersion:  valueOrEmpty(req.McpSpecVersion),
-			SpecVersions: listOrNil(req.McpSpecVersions),
+			SpecVersions: obtainMCPSpecVersionsFromRequest(req.McpSpecVersion, req.McpSpecVersions),
 		}
 
 		if err := s.repo.Update(ctx, tx, proxy, orgUUID); err != nil {
@@ -956,13 +954,6 @@ func valueOrEmpty(value *string) string {
 	return *value
 }
 
-func listOrNil(value *[]string) []string {
-	if value == nil {
-		return nil
-	}
-	return *value
-}
-
 func stringPtrIfNotEmpty(value string) *string {
 	if value == "" {
 		return nil
@@ -1130,7 +1121,6 @@ func convertModelMCPProxyToSpec(proxy *models.MCPProxy) *models.MCPProxyDTO {
 		Description:     stringPtrIfNotEmpty(proxy.Description),
 		ID:              id,
 		InCatalog:       inCatalog,
-		McpSpecVersion:  stringPtrIfNotEmpty(proxy.Configuration.SpecVersion),
 		McpSpecVersions: obtainStoredMCPSpecVersions(proxy.Configuration),
 		Name:            name,
 		Endpoints:       buildMCPEndpointDTOsForResponse(proxy.Endpoints),
@@ -1166,7 +1156,6 @@ func convertModelMCPProxyToListItem(proxy *models.MCPProxy) models.MCPProxyListI
 		CreatedBy:       stringPtrIfNotEmpty(proxy.CreatedBy),
 		Description:     stringPtrIfNotEmpty(proxy.Description),
 		ID:              stringPtrIfNotEmpty(id),
-		McpSpecVersion:  stringPtrIfNotEmpty(proxy.Configuration.SpecVersion),
 		McpSpecVersions: obtainStoredMCPSpecVersions(proxy.Configuration),
 		Name:            stringPtrIfNotEmpty(name),
 		Status:          stringPtrIfNotEmpty(status),
@@ -1197,6 +1186,19 @@ func validateMCPSpecVersionsInRequest(mcpSpecVersion *string, mcpSpecVersions *[
 		if !mcpVersionPattern.MatchString(version) {
 			return fmt.Errorf("%w: mcpSpecVersions: %q is not an MCP version (YYYY-MM-DD)", utils.ErrInvalidInput, version)
 		}
+	}
+	return nil
+}
+
+// obtainMCPSpecVersionsFromRequest returns the MCP versions to save from a create or update
+// request. Only the list is saved: a request using the deprecated single mcpSpecVersion is saved
+// as a one-item list. Returns nil when neither was sent.
+func obtainMCPSpecVersionsFromRequest(mcpSpecVersion *string, mcpSpecVersions *[]string) []string {
+	if mcpSpecVersions != nil {
+		return *mcpSpecVersions
+	}
+	if mcpSpecVersion != nil && *mcpSpecVersion != "" {
+		return []string{*mcpSpecVersion}
 	}
 	return nil
 }
@@ -1766,7 +1768,7 @@ func (s *MCPProxyService) fetchMCPServerInfo(ctx context.Context, endpointURL st
 
 	// Server before MCP 2026-07-28: list at the version initialize asked for. Each request
 	// carries the session ID that initialize gave us.
-	return s.fetchToolsPromptsAndResources(ctx, endpointURL, sessionID, headerName, headerValue, mcpProtocolVersion,
+	return s.fetchToolsPromptsAndResources(ctx, endpointURL, sessionID, headerName, headerValue, mcpSpecVersionJune2025,
 		serverInfo, serverVersions), nil
 }
 
@@ -1938,7 +1940,7 @@ func (s *MCPProxyService) initializeMCPServer(ctx context.Context, endpointURL s
 		ID:      1,
 		Method:  mcpMethodInitialize,
 		Params: map[string]interface{}{
-			"protocolVersion": mcpProtocolVersion,
+			"protocolVersion": mcpSpecVersionJune2025,
 			"capabilities":    map[string]interface{}{"roots": map[string]bool{"listChanged": true}},
 			"clientInfo":      map[string]string{"name": mcpClientName, "version": mcpClientVersion},
 		},

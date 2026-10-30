@@ -16487,7 +16487,8 @@ components:
           deprecated: true
           description: >-
             Deprecated: use mcpSpecVersions. MCP specification version implemented by the upstream
-            server. Still accepted when mcpSpecVersions is not set.
+            server. Still accepted when mcpSpecVersions is not set, and saved as a one-item
+            mcpSpecVersions.
           example: "2025-03-26"
         mcpSpecVersions:
           type: array
@@ -16554,8 +16555,7 @@ components:
           type: string
           deprecated: true
           description: >-
-            Deprecated: use mcpSpecVersions. MCP specification version implemented by the upstream
-            server. Still accepted when mcpSpecVersions is not set.
+            Deprecated: no longer returned; read mcpSpecVersions instead.
         mcpSpecVersions:
           type: array
           description: >-
@@ -16619,8 +16619,7 @@ components:
           type: string
           deprecated: true
           description: >-
-            Deprecated: use mcpSpecVersions. MCP specification version implemented by the upstream
-            server. Still accepted when mcpSpecVersions is not set.
+            Deprecated: no longer returned; read mcpSpecVersions instead.
         mcpSpecVersions:
           type: array
           description: >-

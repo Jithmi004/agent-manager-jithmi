@@ -1057,10 +1057,37 @@ func TestObtainStoredMCPSpecVersions(t *testing.T) {
 	assert.Nil(t, obtainStoredMCPSpecVersions(models.MCPProxyConfig{}))
 }
 
-// The proxy and list-item responses both return the versions as mcpSpecVersions.
+// The proxy and list-item responses both return the versions as mcpSpecVersions only; the
+// deprecated mcpSpecVersion is not returned, even for a proxy saved before the list existed.
 func TestConvertModelMCPProxy_ReturnsMCPSpecVersions(t *testing.T) {
-	proxy := &models.MCPProxy{Configuration: models.MCPProxyConfig{SpecVersions: []string{"2026-07-28"}}}
+	for name, config := range map[string]models.MCPProxyConfig{
+		"saved with a list":             {SpecVersions: []string{"2026-07-28"}},
+		"saved before the list existed": {SpecVersion: "2026-07-28"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			proxy := &models.MCPProxy{Configuration: config}
 
-	assert.Equal(t, &[]string{"2026-07-28"}, convertModelMCPProxyToSpec(proxy).McpSpecVersions)
-	assert.Equal(t, &[]string{"2026-07-28"}, convertModelMCPProxyToListItem(proxy).McpSpecVersions)
+			assert.Equal(t, &[]string{"2026-07-28"}, convertModelMCPProxyToSpec(proxy).McpSpecVersions)
+			assert.Nil(t, convertModelMCPProxyToSpec(proxy).McpSpecVersion)
+			assert.Equal(t, &[]string{"2026-07-28"}, convertModelMCPProxyToListItem(proxy).McpSpecVersions)
+			assert.Nil(t, convertModelMCPProxyToListItem(proxy).McpSpecVersion)
+		})
+	}
+}
+
+// The console edits a proxy by sending back what GET returned, with its changes. That must pass
+// the version check, including for a proxy saved before the list existed.
+func TestConvertModelMCPProxy_ResponseSentBackPassesVersionCheck(t *testing.T) {
+	got := convertModelMCPProxyToSpec(&models.MCPProxy{Configuration: models.MCPProxyConfig{SpecVersion: "2025-06-18"}})
+
+	assert.NoError(t, validateMCPSpecVersionsInRequest(got.McpSpecVersion, got.McpSpecVersions))
+}
+
+// Only the list is saved: a request using the deprecated single mcpSpecVersion is saved as a
+// one-item list.
+func TestObtainMCPSpecVersionsFromRequest(t *testing.T) {
+	assert.Equal(t, []string{"2026-07-28", "2025-11-25"},
+		obtainMCPSpecVersionsFromRequest(nil, &[]string{"2026-07-28", "2025-11-25"}))
+	assert.Equal(t, []string{"2025-06-18"}, obtainMCPSpecVersionsFromRequest(strPtr("2025-06-18"), nil))
+	assert.Nil(t, obtainMCPSpecVersionsFromRequest(nil, nil))
 }

@@ -78,7 +78,6 @@ type MCPProxyDeploymentSpec struct {
 	Vhost        *string            `yaml:"vhost" json:"vhost"`
 	Upstream     MCPProxyUpstream   `yaml:"upstream" json:"upstream"`
 	Resilience   *models.Resilience `yaml:"resilience,omitempty" json:"resilience,omitempty"`
-	SpecVersion  string             `yaml:"specVersion,omitempty" json:"specVersion,omitempty"`
 	SpecVersions []string           `yaml:"specVersions,omitempty" json:"specVersions,omitempty"`
 	Policies     []models.MCPPolicy `yaml:"policies,omitempty" json:"policies,omitempty"`
 }
@@ -417,15 +416,12 @@ func (s *MCPProxyService) buildMCPProxyDeploymentYAML(proxy *models.MCPProxy, pr
 		contextValue = *proxy.Configuration.Context
 	}
 
-	// A proxy saved with mcpSpecVersions sends the list as specVersions. The gateway rejects
-	// specVersion and specVersions together, so specVersion is set only when there's no list.
-	specVersions := proxy.Configuration.SpecVersions
-	specVersion := ""
-	if len(specVersions) == 0 {
-		specVersion = proxy.Configuration.SpecVersion
-		if strings.TrimSpace(specVersion) == "" {
-			specVersion = mcpProtocolVersion
-		}
+	// The gateway always gets the MCP versions as the specVersions list. A proxy saved before the
+	// list existed has only the single SpecVersion, sent as a one-item list; with neither, the
+	// default version is sent.
+	specVersions := []string{mcpSpecVersionJune2025}
+	if storedVersions := obtainStoredMCPSpecVersions(proxy.Configuration); storedVersions != nil {
+		specVersions = *storedVersions
 	}
 
 	upstream := MCPProxyUpstream{}
@@ -474,7 +470,6 @@ func (s *MCPProxyService) buildMCPProxyDeploymentYAML(proxy *models.MCPProxy, pr
 			Vhost:        proxy.Configuration.Vhost,
 			Upstream:     upstream,
 			Resilience:   proxy.Configuration.Resilience,
-			SpecVersion:  specVersion,
 			SpecVersions: specVersions,
 			Policies:     policies,
 		},

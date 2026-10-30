@@ -31,7 +31,7 @@ type MCPProxyRequest struct {
 	Context *string `json:"context,omitempty"`
 	// Virtual host assigned to the MCP proxy
 	Vhost *string `json:"vhost,omitempty"`
-	// Deprecated: use mcpSpecVersions. MCP specification version implemented by the upstream server. Still accepted when mcpSpecVersions is not set.
+	// Deprecated: use mcpSpecVersions. MCP specification version implemented by the upstream server. Still accepted when mcpSpecVersions is not set, and saved as a one-item mcpSpecVersions.
 	// Deprecated
 	McpSpecVersion *string `json:"mcpSpecVersion,omitempty"`
 	// MCP specification versions the upstream server supports, for example from the supportedVersions of /mcp-proxies/fetch-server-info. Each value is a date (YYYY-MM-DD). Cannot be set together with mcpSpecVersion.

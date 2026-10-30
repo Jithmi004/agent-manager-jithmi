@@ -85,8 +85,8 @@ func TestGenerateMCPProxyDeploymentYAML_Basic(t *testing.T) {
 	if deployment.Spec.Context != "/" {
 		t.Errorf("expected default context '/', got %q", deployment.Spec.Context)
 	}
-	if deployment.Spec.SpecVersion != mcpProtocolVersion {
-		t.Errorf("expected default specVersion %s, got %s", mcpProtocolVersion, deployment.Spec.SpecVersion)
+	if !slices.Equal(deployment.Spec.SpecVersions, []string{mcpSpecVersionJune2025}) {
+		t.Errorf("expected default specVersions [%s], got %v", mcpSpecVersionJune2025, deployment.Spec.SpecVersions)
 	}
 	if deployment.Spec.Upstream.URL != "https://mcp.example.com" {
 		t.Errorf("expected upstream url https://mcp.example.com, got %s", deployment.Spec.Upstream.URL)
@@ -175,8 +175,8 @@ func TestGenerateMCPProxyDeploymentYAML_WithContextAndVhost(t *testing.T) {
 	if deployment.Spec.Vhost == nil || *deployment.Spec.Vhost != "mcp.example.com" {
 		t.Errorf("expected vhost mcp.example.com, got %v", deployment.Spec.Vhost)
 	}
-	if deployment.Spec.SpecVersion != "2024-11-05" {
-		t.Errorf("expected specVersion 2024-11-05, got %s", deployment.Spec.SpecVersion)
+	if !slices.Equal(deployment.Spec.SpecVersions, []string{"2024-11-05"}) {
+		t.Errorf("expected specVersions [2024-11-05], got %v", deployment.Spec.SpecVersions)
 	}
 }
 
@@ -847,29 +847,28 @@ func TestAppendMCPIdentityAuthPolicies_ScopeWithNoToolsEmitsAuthOnly(t *testing.
 	assert.Equal(t, []string{"gh-proxy:read"}, out[0].Params["requiredScopes"])
 }
 
-// A proxy saved with mcpSpecVersions is deployed with specVersions only: the gateway rejects
-// specVersion and specVersions together. A proxy with only the single version deploys as before.
+// The gateway always gets the MCP versions as the specVersions list, never the deprecated
+// single specVersion.
 func TestGenerateMCPProxyDeploymentYAML_SpecVersions(t *testing.T) {
 	tests := []struct {
 		name             string
 		config           models.MCPProxyConfig
-		wantSpecVersion  string
 		wantSpecVersions []string
 	}{
 		{
-			name:             "list saved: specVersions only",
+			name:             "list saved: the list",
 			config:           models.MCPProxyConfig{SpecVersions: []string{"2026-07-28", "2025-11-25"}},
 			wantSpecVersions: []string{"2026-07-28", "2025-11-25"},
 		},
 		{
-			name:            "only the single version: specVersion, as before",
-			config:          models.MCPProxyConfig{SpecVersion: "2025-11-25"},
-			wantSpecVersion: "2025-11-25",
+			name:             "saved before the list existed: the single version as a one-item list",
+			config:           models.MCPProxyConfig{SpecVersion: "2025-11-25"},
+			wantSpecVersions: []string{"2025-11-25"},
 		},
 		{
-			name:            "neither: specVersion defaults, as before",
-			config:          models.MCPProxyConfig{},
-			wantSpecVersion: mcpProtocolVersion,
+			name:             "neither: the default version",
+			config:           models.MCPProxyConfig{},
+			wantSpecVersions: []string{mcpSpecVersionJune2025},
 		},
 	}
 	for _, tt := range tests {
@@ -886,18 +885,11 @@ func TestGenerateMCPProxyDeploymentYAML_SpecVersions(t *testing.T) {
 				t.Fatalf("failed to unmarshal YAML: %v", err)
 			}
 
-			if deployment.Spec.SpecVersion != tt.wantSpecVersion {
-				t.Errorf("specVersion: want %q, got %q", tt.wantSpecVersion, deployment.Spec.SpecVersion)
-			}
 			if !slices.Equal(deployment.Spec.SpecVersions, tt.wantSpecVersions) {
 				t.Errorf("specVersions: want %v, got %v", tt.wantSpecVersions, deployment.Spec.SpecVersions)
 			}
-			// The field that isn't used must not appear in the YAML at all.
-			if tt.wantSpecVersion == "" && strings.Contains(yamlStr, "specVersion:") {
-				t.Errorf("specVersion must be left out when specVersions is sent:\n%s", yamlStr)
-			}
-			if tt.wantSpecVersions == nil && strings.Contains(yamlStr, "specVersions:") {
-				t.Errorf("specVersions must be left out when only specVersion is set:\n%s", yamlStr)
+			if strings.Contains(yamlStr, "specVersion:") {
+				t.Errorf("the deprecated specVersion must not be sent:\n%s", yamlStr)
 			}
 		})
 	}
