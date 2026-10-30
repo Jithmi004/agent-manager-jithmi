@@ -72,14 +72,15 @@ type MCPProxyDeploymentYAML struct {
 
 // MCPProxyDeploymentSpec represents the deployment spec section.
 type MCPProxyDeploymentSpec struct {
-	DisplayName string             `yaml:"displayName" json:"displayName"`
-	Version     string             `yaml:"version" json:"version"`
-	Context     string             `yaml:"context" json:"context"`
-	Vhost       *string            `yaml:"vhost" json:"vhost"`
-	Upstream    MCPProxyUpstream   `yaml:"upstream" json:"upstream"`
-	Resilience  *models.Resilience `yaml:"resilience,omitempty" json:"resilience,omitempty"`
-	SpecVersion string             `yaml:"specVersion" json:"specVersion"`
-	Policies    []models.MCPPolicy `yaml:"policies,omitempty" json:"policies,omitempty"`
+	DisplayName  string             `yaml:"displayName" json:"displayName"`
+	Version      string             `yaml:"version" json:"version"`
+	Context      string             `yaml:"context" json:"context"`
+	Vhost        *string            `yaml:"vhost" json:"vhost"`
+	Upstream     MCPProxyUpstream   `yaml:"upstream" json:"upstream"`
+	Resilience   *models.Resilience `yaml:"resilience,omitempty" json:"resilience,omitempty"`
+	SpecVersion  string             `yaml:"specVersion,omitempty" json:"specVersion,omitempty"`
+	SpecVersions []string           `yaml:"specVersions,omitempty" json:"specVersions,omitempty"`
+	Policies     []models.MCPPolicy `yaml:"policies,omitempty" json:"policies,omitempty"`
 }
 
 // MCPProxyUpstream represents the flat upstream shape expected by the gateway.
@@ -177,6 +178,7 @@ func buildMCPProxyEnvArtifact(source *models.MCPProxy, endpoint *models.MCPProxy
 			Context:      source.Configuration.Context,
 			Vhost:        source.Configuration.Vhost,
 			SpecVersion:  source.Configuration.SpecVersion,
+			SpecVersions: source.Configuration.SpecVersions,
 			Upstream:     upstream,
 			Policies:     cfg.Policies,
 			Capabilities: cfg.Capabilities,
@@ -415,9 +417,15 @@ func (s *MCPProxyService) buildMCPProxyDeploymentYAML(proxy *models.MCPProxy, pr
 		contextValue = *proxy.Configuration.Context
 	}
 
-	specVersion := proxy.Configuration.SpecVersion
-	if strings.TrimSpace(specVersion) == "" {
-		specVersion = mcpProtocolVersion
+	// A proxy saved with mcpSpecVersions sends the list as specVersions. The gateway rejects
+	// specVersion and specVersions together, so specVersion is set only when there's no list.
+	specVersions := proxy.Configuration.SpecVersions
+	specVersion := ""
+	if len(specVersions) == 0 {
+		specVersion = proxy.Configuration.SpecVersion
+		if strings.TrimSpace(specVersion) == "" {
+			specVersion = mcpProtocolVersion
+		}
 	}
 
 	upstream := MCPProxyUpstream{}
@@ -460,14 +468,15 @@ func (s *MCPProxyService) buildMCPProxyDeploymentYAML(proxy *models.MCPProxy, pr
 		Kind:       kindMCPProxy,
 		Metadata:   DeploymentMetadata{Name: handle},
 		Spec: MCPProxyDeploymentSpec{
-			DisplayName: displayName,
-			Version:     version,
-			Context:     contextValue,
-			Vhost:       proxy.Configuration.Vhost,
-			Upstream:    upstream,
-			Resilience:  proxy.Configuration.Resilience,
-			SpecVersion: specVersion,
-			Policies:    policies,
+			DisplayName:  displayName,
+			Version:      version,
+			Context:      contextValue,
+			Vhost:        proxy.Configuration.Vhost,
+			Upstream:     upstream,
+			Resilience:   proxy.Configuration.Resilience,
+			SpecVersion:  specVersion,
+			SpecVersions: specVersions,
+			Policies:     policies,
 		},
 	}, nil
 }

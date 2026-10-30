@@ -17,6 +17,7 @@
 package services
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -844,4 +845,60 @@ func TestAppendMCPIdentityAuthPolicies_ScopeWithNoToolsEmitsAuthOnly(t *testing.
 	assert.Len(t, out, 1)
 	assert.Equal(t, "mcp-auth", out[0].Name)
 	assert.Equal(t, []string{"gh-proxy:read"}, out[0].Params["requiredScopes"])
+}
+
+// A proxy saved with mcpSpecVersions is deployed with specVersions only: the gateway rejects
+// specVersion and specVersions together. A proxy with only the single version deploys as before.
+func TestGenerateMCPProxyDeploymentYAML_SpecVersions(t *testing.T) {
+	tests := []struct {
+		name             string
+		config           models.MCPProxyConfig
+		wantSpecVersion  string
+		wantSpecVersions []string
+	}{
+		{
+			name:             "list saved: specVersions only",
+			config:           models.MCPProxyConfig{SpecVersions: []string{"2026-07-28", "2025-11-25"}},
+			wantSpecVersions: []string{"2026-07-28", "2025-11-25"},
+		},
+		{
+			name:            "only the single version: specVersion, as before",
+			config:          models.MCPProxyConfig{SpecVersion: "2025-11-25"},
+			wantSpecVersion: "2025-11-25",
+		},
+		{
+			name:            "neither: specVersion defaults, as before",
+			config:          models.MCPProxyConfig{},
+			wantSpecVersion: mcpProtocolVersion,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.config.Upstream = models.UpstreamConfig{Main: &models.UpstreamEndpoint{URL: "https://mcp.example.com"}}
+			proxy := &models.MCPProxy{Handle: "spec-versions-proxy", Configuration: tt.config}
+
+			yamlStr, err := (&MCPProxyService{}).generateMCPProxyDeploymentYAML(proxy, "x", nil)
+			if err != nil {
+				t.Fatalf("expected no error, got: %v", err)
+			}
+			var deployment MCPProxyDeploymentYAML
+			if err := yaml.Unmarshal([]byte(yamlStr), &deployment); err != nil {
+				t.Fatalf("failed to unmarshal YAML: %v", err)
+			}
+
+			if deployment.Spec.SpecVersion != tt.wantSpecVersion {
+				t.Errorf("specVersion: want %q, got %q", tt.wantSpecVersion, deployment.Spec.SpecVersion)
+			}
+			if !slices.Equal(deployment.Spec.SpecVersions, tt.wantSpecVersions) {
+				t.Errorf("specVersions: want %v, got %v", tt.wantSpecVersions, deployment.Spec.SpecVersions)
+			}
+			// The field that isn't used must not appear in the YAML at all.
+			if tt.wantSpecVersion == "" && strings.Contains(yamlStr, "specVersion:") {
+				t.Errorf("specVersion must be left out when specVersions is sent:\n%s", yamlStr)
+			}
+			if tt.wantSpecVersions == nil && strings.Contains(yamlStr, "specVersions:") {
+				t.Errorf("specVersions must be left out when only specVersion is set:\n%s", yamlStr)
+			}
+		})
+	}
 }
